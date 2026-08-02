@@ -1,4 +1,4 @@
-# AI Assist
+# RU AI Assist
 
 A sidebar chat with a language model, and in-place rewriting of the text you selected.
 
