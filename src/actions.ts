@@ -18,12 +18,6 @@ export interface AiAction {
   icon: string;
   /** Встроенные действия нельзя удалить, но промпт можно переписать. */
   builtin?: boolean;
-  /**
-   * Плагин делает эту правку сам, без запроса к модели, — промпта у неё нет.
-   * Такое действие живёт в общем списке, чтобы у него были кнопка в меню, слот
-   * быстрого меню и своя команда с хоткеем.
-   */
-  local?: boolean;
 }
 
 /** Заготовки создаются на языке интерфейса — их видно и правится в настройках. */
@@ -36,15 +30,6 @@ export function defaultActions(): AiAction[] {
       mode: "replace",
       icon: "spell-check",
       builtin: true,
-    },
-    {
-      id: "format",
-      name: t("actFormat"),
-      prompt: "",
-      mode: "replace",
-      icon: "eraser",
-      builtin: true,
-      local: true,
     },
     {
       id: "clarify",

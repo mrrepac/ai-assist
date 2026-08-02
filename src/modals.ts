@@ -25,34 +25,28 @@ export class ActionModal extends Modal {
       }),
     );
 
-    // Местное действие правит текст по своим правилам: промпта у него нет и
-    // выбирать, что делать с ответом, не из чего.
-    if (this.draft.local) {
-      new Setting(this.contentEl).setDesc(t("actLocalNote"));
-    } else {
-      new Setting(this.contentEl)
-        .setName(t("actPrompt"))
-        .setDesc(t("actPromptDesc"))
-        .setClass("ai-setting-stacked")
-        .addTextArea((c) => {
-          c.setValue(this.draft.prompt).onChange((v) => (this.draft.prompt = v));
-          c.inputEl.rows = 10;
-        });
+    new Setting(this.contentEl)
+      .setName(t("actPrompt"))
+      .setDesc(t("actPromptDesc"))
+      .setClass("ai-setting-stacked")
+      .addTextArea((c) => {
+        c.setValue(this.draft.prompt).onChange((v) => (this.draft.prompt = v));
+        c.inputEl.rows = 10;
+      });
 
-      new Setting(this.contentEl)
-        .setName(t("actMode"))
-        .setDesc(t("actModeDesc"))
-        .addDropdown((c) =>
-          c
-            .addOptions({
-              replace: t("actModeReplace"),
-              append: t("actModeAppend"),
-              chat: t("actModeChat"),
-            })
-            .setValue(this.draft.mode)
-            .onChange((v) => (this.draft.mode = v as AiAction["mode"])),
-        );
-    }
+    new Setting(this.contentEl)
+      .setName(t("actMode"))
+      .setDesc(t("actModeDesc"))
+      .addDropdown((c) =>
+        c
+          .addOptions({
+            replace: t("actModeReplace"),
+            append: t("actModeAppend"),
+            chat: t("actModeChat"),
+          })
+          .setValue(this.draft.mode)
+          .onChange((v) => (this.draft.mode = v as AiAction["mode"])),
+      );
 
     // Название иконки проверить нечем — списка имён Obsidian не отдаёт. Поэтому
     // рядом с полем живой пример: нарисовалось — значит имя существует.
@@ -73,7 +67,7 @@ export class ActionModal extends Modal {
       )
       .controlEl.prepend(preview);
 
-    if (this.draft.builtin && !this.draft.local) {
+    if (this.draft.builtin) {
       new Setting(this.contentEl)
         .setDesc(t("actBuiltinNote"))
         .addButton((b) =>

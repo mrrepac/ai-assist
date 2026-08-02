@@ -10,9 +10,9 @@ sidebar, but the main road is selection → key → done.
 
 ## What it does
 
-- **Actions over the selection.** Fix spelling, tidy up spacing, make it clearer, expand,
-  shorten, evaluate, clean up a transcript — or write your own prompt. The result replaces
-  the selected text; the undo is the usual `Ctrl+Z`.
+- **Actions over the selection.** Fix spelling, make it clearer, expand, shorten,
+  evaluate, clean up a transcript — or write your own prompt. The result replaces the
+  selected text; the undo is the usual `Ctrl+Z`.
 - **Quick menu** (`Alt+1`) opens over the selection: keys `1`–`5` run your five presets,
   and the field below takes a one-off instruction. The digit only picks a preset while the
   field is empty, so a prompt can start with a number. The physical key is what counts, so
@@ -23,17 +23,6 @@ sidebar, but the main road is selection → key → done.
   tokens, and a button that saves the conversation into a note.
 - **The model can edit the note itself** through tools — every edit is shown as a card
   with an Apply button, so nothing lands in your text without you.
-
-### Tidy up spacing — without the model
-
-One action is done by the plugin itself, with no request to any server: it removes double
-spaces, spaces at the end of lines, extra blank lines, and invisible characters
-(non-breaking spaces, zero-width marks, soft hyphens from PDFs). It is instant, free, and
-always does the same thing.
-
-It leaves alone what has meaning: code blocks, the YAML header, table columns, list
-indentation, file names inside `[[…]]`, and code inside backticks. Two spaces at the end
-of a line are a markdown hard line break — they stay.
 
 ## Providers
 
@@ -74,9 +63,8 @@ chat, ask about the selection, repeat the last action, stop generation, and the 
 ## What is sent where
 
 The text you run an action on goes to the provider you configured, and nowhere else. The
-"Tidy up spacing" action sends nothing at all. The plugin has no telemetry, no analytics
-and no server of its own; the chat history and the settings live in
-`.obsidian/plugins/ai-assist/data.json` inside your vault.
+plugin has no telemetry, no analytics and no server of its own; the chat history and the
+settings live in `.obsidian/plugins/ai-assist/data.json` inside your vault.
 
 ## Requirements
 

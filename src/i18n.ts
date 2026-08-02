@@ -19,16 +19,6 @@ const en = {
     "change how the text is broken into lines.\n\n" +
     "If the text is in another language, fix it by that language's rules. If there is nothing to " +
     "fix, return it verbatim. When in doubt, leave it as it is.",
-  actFormat: "Tidy up spacing",
-  fmtDesc:
-    "Removes double spaces, spaces at the end of lines, extra blank lines and invisible " +
-    "characters — non-breaking spaces, zero-width marks, soft hyphens. Code blocks, tables, " +
-    "the YAML header and file names inside [[…]] are left alone. The plugin does it itself: " +
-    "no request to the model, no waiting, nothing to pay for.",
-  fmtCleaned: "Removed — {what}",
-  fmtBlanks: "blank lines: {n}",
-  fmtSpaces: "spaces: {n}",
-  fmtInvisible: "invisible characters: {n}",
   actClarify: "Make it clearer",
   actClarifyPrompt:
     "You are an editor. Rewrite the text so it reads easily the first time — but it must stay the " +
@@ -231,9 +221,6 @@ const en = {
   actModeReplace: "Replace the text",
   actModeAppend: "Add below",
   actModeChat: "Show in the panel",
-  actLocalNote:
-    "This action runs without the model: it tidies up spaces and blank lines by fixed rules, " +
-    "so it has no prompt. The name and the icon are yours to change.",
   actIcon: "Icon",
   actIconDesc: "A name from lucide.dev, e.g. sparkles",
   actBuiltinNote: "A built-in action: it cannot be deleted, but the prompt is yours to change",
@@ -384,16 +371,6 @@ const ru: typeof en = {
     "строки — это авторский приём, а не ошибка. Разбивку на строки не меняй никогда.\n\n" +
     "Текст не на русском — правь по нормам его языка. Исправлять нечего — верни его дословно. " +
     "Сомневаешься — оставь как есть.",
-  actFormat: "Форматирование",
-  fmtDesc:
-    "Убирает двойные пробелы, пробелы в конце строк, лишние пустые строки и невидимые знаки — " +
-    "неразрывные пробелы, метки нулевой ширины, мягкие переносы. Блоки кода, таблицы, шапку " +
-    "YAML и имена файлов в [[…]] не трогает. Делает всё сам плагин: запроса к модели нет, " +
-    "ждать нечего и платить не за что.",
-  fmtCleaned: "Убрано — {what}",
-  fmtBlanks: "пустых строк: {n}",
-  fmtSpaces: "пробелов: {n}",
-  fmtInvisible: "невидимых знаков: {n}",
   actClarify: "Сделать понятнее",
   actClarifyPrompt:
     "Ты редактор. Перепиши текст так, чтобы он читался легко с первого раза, — но это должен " +
@@ -591,9 +568,6 @@ const ru: typeof en = {
   actModeReplace: "Заменить текст",
   actModeAppend: "Дописать снизу",
   actModeChat: "Показать в панели",
-  actLocalNote:
-    "Действие работает без модели: правит пробелы и пустые строки по своим правилам, промпта " +
-    "у него нет. Название и иконку можно менять как угодно.",
   actIcon: "Иконка",
   actIconDesc: "Название с lucide.dev, например sparkles",
   actBuiltinNote: "Встроенное действие: удалить нельзя, но промпт можно переписать под себя",

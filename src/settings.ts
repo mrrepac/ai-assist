@@ -147,12 +147,6 @@ export class AiAssistSettingTab extends PluginSettingTab {
         );
       }
 
-      // У местного действия промпта нет — вместо пустого поля объясняем, что
-      // оно делает, иначе слот выглядит сломанным.
-      if (action.local) {
-        new Setting(containerEl).setDesc(t("fmtDesc")).setClass("ai-quick-prompt");
-        return;
-      }
       // Промпт правится прямо здесь: ради одной фразы не хочется открывать окно.
       new Setting(containerEl)
         .setDesc(t("quickPrompt", { name: action.name }))

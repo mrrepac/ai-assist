@@ -15,7 +15,6 @@ import { AiAction, cleanReply, hasText, shortName, systemFor } from "./actions";
 import { ApiConfig, ApiError, Usage, chat } from "./api";
 import { chatToMarkdown } from "./chatnote";
 import { diffWords } from "./diff";
-import { formatSummary, formatText } from "./format";
 import { t } from "./i18n";
 import { QuickMenu, RECENT_LIMIT } from "./quickmenu";
 import { ReplaceResult } from "./tools";
@@ -263,11 +262,8 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   /**
    * Выделение с проверкой размера. Оба отказа объясняем вслух: молчаливое
    * «ничего не произошло» пользователь принимает за поломку плагина.
-   *
-   * local — правка идёт без модели: тогда длина заметки никого не касается,
-   * и отказывать не за что.
    */
-  private grabChecked(editor: Editor, local = false): Selection | null {
+  private grabChecked(editor: Editor): Selection | null {
     const sel = this.grabSelection(editor);
     if (!sel) {
       new Notice(t("noSelection"));
@@ -275,7 +271,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     }
     // Забыть выделить на длинной заметке — обычное дело, а уезжает она в API
     // целиком: и деньги, и почти наверняка отказ провайдера по длине запроса.
-    if (!local && sel.implicit && sel.text.length > IMPLICIT_LIMIT) {
+    if (sel.implicit && sel.text.length > IMPLICIT_LIMIT) {
       new Notice(t("tooBig", { chars: sel.text.length, limit: IMPLICIT_LIMIT }), 8000);
       return null;
     }
@@ -317,22 +313,15 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   }
 
   async runAction(action: AiAction, editor: Editor, view: MarkdownView): Promise<void> {
-    // Местная правка ничего не ждёт и ни за что не соперничает — её не грех
-    // сделать и пока модель думает над предыдущей.
-    if (this.running && !action.local) {
+    if (this.running) {
       new Notice(t("busyBar"));
       return;
     }
-    const sel = this.grabChecked(editor, action.local);
+    const sel = this.grabChecked(editor);
     if (!sel) return;
 
     const target: EditTarget = { action, sel, filePath: view.file?.path ?? "", editor, view };
     this.lastRun = action;
-
-    if (action.local) {
-      this.runLocal(target);
-      return;
-    }
 
     const system = systemFor(action, this.settings.targetLang);
 
@@ -395,7 +384,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
         return;
       }
 
-      this.applyResult(entry, target, replacement, { usage: result.usage });
+      this.applyResult(entry, target, replacement, result.usage);
     } catch (e) {
       if (controller.signal.aborted) {
         this.finishEntry(entry, "stopped");
@@ -409,27 +398,6 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       if (this.running === controller) this.running = null;
       this.hideBusy();
     }
-  }
-
-  /**
-   * Действие, которое плагин делает сам, без модели: сейчас такое одно —
-   * чистка пробелов и пустых строк. Запись в журнале заводим ту же, что и для
-   * ответа модели: видно, что сделано, и правка возвращается той же кнопкой.
-   */
-  private runLocal(target: EditTarget): void {
-    const { action, sel } = target;
-    // Края выделения, сделанного руками, — стык с чужим текстом, и трогать их
-    // нельзя; заметка целиком принадлежит нам вся, вместе с краями.
-    const { text, stats } = formatText(sel.text, { trimEdges: sel.implicit });
-
-    const entry = this.newEntry(action);
-    this.history.push(entry);
-    if (text === sel.text) {
-      this.finishEntry(entry, "unchanged");
-      new Notice(t("unchanged", { action: shortName(action) }));
-      return;
-    }
-    this.applyResult(entry, target, text, { summary: formatSummary(stats) });
   }
 
   /**
@@ -448,14 +416,14 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   }
 
   /**
-   * Общий хвост правки: положить результат в заметку, запомнить отмену и
-   * закрыть запись журнала. Одинаков и для ответа модели, и для местной чистки.
+   * Хвост правки: положить результат в заметку, запомнить отмену и закрыть
+   * запись журнала.
    */
   private applyResult(
     entry: ActionEntry,
     target: EditTarget,
     replacement: string,
-    done: { usage?: Usage | null; summary?: string },
+    usage: Usage | null,
   ): void {
     const { action, sel, filePath, editor, view } = target;
 
@@ -507,8 +475,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     this.finishEntry(entry, "done", undefined, {
       before: action.mode === "append" ? "" : sel.text,
       after: replacement,
-      usage: done.usage ?? null,
-      summary: done.summary,
+      usage,
     });
     new Notice(t("applied", { action: shortName(action) }));
   }
@@ -518,16 +485,13 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     entry: ActionEntry,
     status: ActionEntry["status"],
     error?: string,
-    result?: { before: string; after: string; usage: Usage | null; summary?: string },
+    result?: { before: string; after: string; usage: Usage | null },
   ): void {
     entry.status = status;
     entry.error = error;
     if (result) {
-      // У местной чистки вместо текста короткий отчёт: сам текст уже лежит в
-      // заметке, а пословный диф на одних пробелах показывать нечего — он
-      // насчитает ноль правок и нарисует пустые цветные полоски.
-      entry.content = result.summary || result.after.slice(0, LOG_PREVIEW);
-      const diff = result.summary || !result.before ? null : diffWords(result.before, result.after);
+      entry.content = result.after.slice(0, LOG_PREVIEW);
+      const diff = result.before ? diffWords(result.before, result.after) : null;
       if (diff) {
         entry.segments = diff.segments;
         entry.tooMany = diff.tooMany;

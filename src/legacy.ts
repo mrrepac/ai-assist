@@ -83,10 +83,13 @@ export function isLegacyPrompt(prompt: string): boolean {
  * меню — просто перестав быть встроенной. Вычищаем только пока промпт остался
  * заводским: переписанный под себя — это уже своё действие, его не трогаем.
  */
-const RETIRED = ["translate"];
+const RETIRED = ["translate", "format"];
 
 export function isRetired(id: string, prompt: string): boolean {
-  return RETIRED.includes(id) && isLegacyPrompt(prompt);
+  if (!RETIRED.includes(id)) return false;
+  // «Форматирование» правило чистки делало само, промпта у него не было вовсе —
+  // терять там нечего. У остальных смотрим на промпт.
+  return !prompt.trim() || isLegacyPrompt(prompt);
 }
 
 /*
