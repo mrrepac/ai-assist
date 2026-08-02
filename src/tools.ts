@@ -154,7 +154,8 @@ export function toolSpecs(): ToolSpec[] {
 export interface ParsedCall {
   call: ToolCall;
   name: ToolName | null;
-  args: Record<string, any>;
+  /** Что прислала модель: каждое поле проверяем по месту, доверия ему нет. */
+  args: Record<string, unknown>;
   /** Читающие инструменты выполняются молча, пишущие — по кнопке. */
   writes: boolean;
   title: string;
@@ -164,9 +165,9 @@ export interface ParsedCall {
 }
 
 export function parseCall(call: ToolCall, notePath: string | null): ParsedCall {
-  let args: Record<string, any> = {};
+  let args: Record<string, unknown> = {};
   try {
-    args = call.arguments.trim() ? JSON.parse(call.arguments) : {};
+    args = call.arguments.trim() ? (JSON.parse(call.arguments) as Record<string, unknown>) : {};
   } catch {
     // Модель иногда шлёт оборванный JSON — тогда просто нечего применять.
     args = {};

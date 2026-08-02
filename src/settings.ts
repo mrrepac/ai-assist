@@ -274,10 +274,9 @@ export class AiAssistSettingTab extends PluginSettingTab {
           try {
             const models = await listModels(this.plugin.apiConfig());
             new Notice(t("setModelFetched", { n: models.length }));
-            new ModelSuggestModal(this.app, models, async (model) => {
+            new ModelSuggestModal(this.app, models, (model) => {
               s.model = model;
-              await this.save();
-              this.display();
+              void this.saveAndRedraw();
             }).open();
           } catch (e) {
             new Notice(e instanceof ApiError ? e.message : String(e), 8000);

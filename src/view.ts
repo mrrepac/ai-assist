@@ -17,7 +17,6 @@ import {
   ActionEntry,
   AiAssistSettings,
   HistoryItem,
-  StoredChatMessage,
   isActionEntry,
   providerLabel,
   providerOf,
@@ -225,9 +224,9 @@ export class ChatView extends ItemView {
   private async pickModel(): Promise<void> {
     try {
       const models = await listModels(this.host.apiConfig());
-      new ModelSuggestModal(this.host.app, models, async (model) => {
+      new ModelSuggestModal(this.host.app, models, (model) => {
         this.host.settings.model = model;
-        await this.host.saveSettings();
+        void this.host.saveSettings();
       }).open();
     } catch (err) {
       new Notice(err instanceof ApiError ? err.message : String(err), 8000);

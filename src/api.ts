@@ -161,7 +161,7 @@ function body(cfg: ApiConfig, messages: ChatMessage[], opts: ChatOptions): strin
 function describeError(status: number, raw: string): ApiError {
   let detail = "";
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as { error?: { message?: string }; message?: string } | null;
     detail = parsed?.error?.message ?? parsed?.message ?? "";
   } catch {
     detail = raw.slice(0, 300);
@@ -254,7 +254,7 @@ export function drainSse(buffer: string, onEvent: (chunk: WireChunk) => void): s
     const data = line.slice(5).trim();
     if (data === "[DONE]") continue;
     try {
-      onEvent(JSON.parse(data));
+      onEvent(JSON.parse(data) as WireChunk);
     } catch {
       // недописанный или мусорный JSON — молча пропускаем, поток продолжается
     }
@@ -269,6 +269,10 @@ async function streamChat(
 ): Promise<ChatResult> {
   let res: Response;
   try {
+    // Здесь и только здесь вместо requestUrl идёт fetch: requestUrl отдаёт ответ
+    // целиком и тела по кускам не имеет, а без этого нет и печати ответа на
+    // глазах. Провайдер без CORS ломает ровно этот путь — тогда работает
+    // нестримовый plainChat на requestUrl, и настройка стрима прячется.
     res = await fetch(endpoint(cfg.baseUrl, "/chat/completions"), {
       method: "POST",
       headers: headers(cfg),

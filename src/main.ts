@@ -2,7 +2,6 @@ import {
   Editor,
   EditorPosition,
   MarkdownView,
-  Menu,
   Notice,
   Platform,
   Plugin,
@@ -175,7 +174,8 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   private async loadStore(): Promise<void> {
     const raw = (await this.loadData()) as Partial<StoredData> | null;
     this.settings = mergeSettings(raw?.settings ?? raw);
-    this.history = Array.isArray(raw?.history) ? raw!.history!.slice(-HISTORY_LIMIT) : [];
+    const stored = raw?.history;
+    this.history = Array.isArray(stored) ? stored.slice(-HISTORY_LIMIT) : [];
 
     // Вчерашний разговор не подхватываем: Obsidian открывается с чистой лентой.
     // Что стоило сохранить — уходит в заметку кнопкой в шапке панели.
