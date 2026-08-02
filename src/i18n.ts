@@ -262,16 +262,11 @@ const en = {
   setProviderChad: "ChadGPT",
   setProviderTunnel: "GPTunnel",
   setProviderOllama: "Ollama (on this computer)",
-  setProviderLmStudio: "LM Studio (on this computer)",
   setProviderCustom: "Another OpenAI-compatible one",
   setModelFetchHint: "Press “Fetch the list” — the names come from the provider.",
   setModelOllama:
     "Press “Fetch the list” — it shows the models you have pulled. Ollama has to be running; " +
     "no key is needed. From a phone the model runs on the desktop, so it is out of reach.",
-  setModelLmStudio:
-    "Start the server in LM Studio and load a model, then press “Fetch the list”. No key is " +
-    "needed. If nothing ever arrives, turn on CORS in the server settings or switch off " +
-    "“Show the answer as it is generated”.",
   setModelChad: "Names look like gpt-5.4 or claude-4.5-sonnet — press “Fetch the list”.",
   setPickModel: "Now press “Fetch the list” and pick a model — the names here are different",
   setModelPolza: "Names look like provider/model, for example deepseek/deepseek-v4-flash.",
@@ -609,16 +604,11 @@ const ru: typeof en = {
   setProviderChad: "ChadGPT",
   setProviderTunnel: "GPTunnel",
   setProviderOllama: "Ollama (на этом компьютере)",
-  setProviderLmStudio: "LM Studio (на этом компьютере)",
   setProviderCustom: "Другой OpenAI-совместимый",
   setModelFetchHint: "Нажми «Получить список» — имена придут от провайдера.",
   setModelOllama:
     "Нажми «Получить список» — покажет то, что скачано. Ollama должна быть запущена, ключ не " +
     "нужен. С телефона не достать: модель крутится на компьютере.",
-  setModelLmStudio:
-    "Запусти сервер в LM Studio и загрузи модель, потом нажми «Получить список». Ключ не " +
-    "нужен. Если ответа так и нет — включи CORS в настройках сервера или выключи «Показывать " +
-    "ответ по мере генерации».",
   setModelChad: "Имена вида gpt-5.4 или claude-4.5-sonnet — нажми «Получить список».",
   setPickModel: "Теперь нажми «Получить список» и выбери модель — имена здесь другие",
   setModelPolza: "Имена вида провайдер/модель, например deepseek/deepseek-v4-flash.",

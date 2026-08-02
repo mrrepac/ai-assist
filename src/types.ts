@@ -104,9 +104,8 @@ export const PROVIDERS: Record<string, { kind: ProviderKind; baseUrl: string }> 
   chadgpt: { kind: "openai", baseUrl: "https://ask.chadgpt.ru/api/v1" },
   gptunnel: { kind: "openai", baseUrl: "https://gptunnel.ru/v1" },
   polza: { kind: "openai", baseUrl: "https://api.polza.ai/api/v1" },
-  // Локальные сервера — в конец списка: у них свой разговор про ключ и порт.
+  // Локальный сервер — в конец списка: у него свой разговор про ключ и порт.
   ollama: { kind: "openai", baseUrl: "http://localhost:11434/v1" },
-  lmstudio: { kind: "openai", baseUrl: "http://localhost:1234/v1" },
 };
 
 /**
@@ -149,8 +148,6 @@ export function providerLabel(name: string): string {
       return t("setProviderTunnel");
     case "ollama":
       return t("setProviderOllama");
-    case "lmstudio":
-      return t("setProviderLmStudio");
     default:
       return t("setProviderCustom");
   }

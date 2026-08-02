@@ -28,7 +28,6 @@ const MODEL_HINT: Record<string, I18nKey> = {
   gptunnel: "setModelFetchHint",
   polza: "setModelPolza",
   ollama: "setModelOllama",
-  lmstudio: "setModelLmStudio",
 };
 
 export class AiAssistSettingTab extends PluginSettingTab {

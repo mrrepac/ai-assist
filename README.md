@@ -2,6 +2,12 @@
 
 A sidebar chat with a language model, and in-place rewriting of the text you selected.
 
+**Built for people working from Russia.** Every provider it ships with is reachable
+without a VPN and takes Russian payment cards: DeepSeek directly, plus three Russian
+aggregators — Polza.ai, ChadGPT and GPTunnel — which give you GPT, Claude, Gemini and the
+rest through a single key. And Ollama, if you would rather run a model on your own
+machine.
+
 Most AI plugins are built around the chat. This one is built around the note: you select a
 piece of text, press a key, and the text changes. The chat is there too, in the right
 sidebar, but the main road is selection → key → done.
@@ -26,13 +32,19 @@ sidebar, but the main road is selection → key → done.
 
 ## Providers
 
-Anything that speaks the OpenAI format. Presets: **DeepSeek**, **ChadGPT**, **GPTunnel**,
-**Polza.ai**, **Ollama**, **LM Studio** — plus any other base URL you type in. The API key,
-the model and the address are remembered separately for each provider, so switching back
-and forth does not lose your keys.
+Anything that speaks the OpenAI format. The presets are the ones that work from Russia
+without a VPN:
 
-With **Ollama** or **LM Studio** running on your machine, nothing leaves it at all: no key
-is asked for and none is sent.
+- **DeepSeek** — the Chinese model directly: cheap, no middleman;
+- **Polza.ai**, **ChadGPT**, **GPTunnel** — Russian aggregators: one key, and behind it
+  GPT, Claude, Gemini and dozens of other models, paid for with a Russian card;
+- **Ollama** — a model on your own computer, free and offline.
+
+Plus any other base URL you type in. The API key, the model and the address are remembered
+separately for each provider, so switching back and forth does not lose your keys.
+
+With **Ollama** running on your machine, nothing leaves it at all: no key is asked for and
+none is sent.
 
 ## Getting started
 

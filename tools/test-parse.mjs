@@ -485,9 +485,12 @@ check("мусор вместо списка промптов", mergeSettings({ r
 
 // ——— порядок провайдеров ———
 // Один список на выпадающее меню в настройках и на меню в шапке панели.
-check("порядок провайдеров", PROVIDER_ORDER, ["deepseek", "chadgpt", "gptunnel", "polza", "ollama", "lmstudio"]);
+check("порядок провайдеров", PROVIDER_ORDER, ["deepseek", "chadgpt", "gptunnel", "polza", "ollama"]);
 check("ollama узнаётся по адресу", providerOf({ baseUrl: "http://localhost:11434/v1" }), "ollama");
-check("lm studio узнаётся по адресу", providerOf({ baseUrl: "http://localhost:1234/v1" }), "lmstudio");
+// Пресет LM Studio убран, но его адрес у кого-то остался в настройках: он
+// должен работать дальше как «свой адрес», а не превратиться в поломку.
+check("адрес убранного пресета становится своим", providerOf({ baseUrl: "http://localhost:1234/v1" }), "custom");
+check("и остаётся локальным, то есть без ключа", isLocalUrl("http://localhost:1234/v1"), true);
 
 // ——— локальный сервер ———
 // Ключа у него нет и спрашивать не у кого: решаем по адресу, а не по пресету,
