@@ -289,7 +289,7 @@ check("заметка переписывается целиком", (await write
 check("ушли из заметки — переписывания нет", (await write("replace_note", { text: "х" }, HERE, "Другая.md")).startsWith("Failed"), true);
 
 // ——— слоты быстрого меню ———
-const FRESH_SLOTS = ["spelling", "expand", "format", "shorten", "evaluate"];
+const FRESH_SLOTS = ["spelling", "expand", "clarify", "shorten", "evaluate"];
 check("слотов всегда пять", mergeSettings({ quickSlots: ["spelling"] }).quickSlots.length, 5);
 check("слоты по умолчанию", mergeSettings(null).quickSlots, FRESH_SLOTS);
 check(
@@ -308,10 +308,16 @@ check(
   mergeSettings({ quickSlots: ["spelling", "clarify", "shorten", "evaluate", "translate"] }).quickSlots,
   FRESH_SLOTS,
 );
-// А потом на клавишу 2 попросились «расширить».
+// А потом на клавишу 2 попросились «расширить» — но подменой, а не сдвигом
+// всего ряда: остальные клавиши должны остаться там, где к ним привыкли.
 check(
   "набор без «расширить» заменяется",
   mergeSettings({ quickSlots: ["spelling", "format", "clarify", "shorten", "evaluate"] }).quickSlots,
+  FRESH_SLOTS,
+);
+check(
+  "сдвинутый ряд возвращается на место",
+  mergeSettings({ quickSlots: ["spelling", "expand", "format", "shorten", "evaluate"] }).quickSlots,
   FRESH_SLOTS,
 );
 check(

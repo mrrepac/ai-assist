@@ -184,7 +184,7 @@ export function defaultSettings(): AiAssistSettings {
     tools: true,
     toolsConfirm: true,
     actions: defaultActions(),
-    quickSlots: ["spelling", "expand", "format", "shorten", "evaluate"],
+    quickSlots: ["spelling", "expand", "clarify", "shorten", "evaluate"],
     recentPrompts: [],
     freshStart: true,
   };
