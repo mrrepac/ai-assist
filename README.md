@@ -12,7 +12,7 @@ Most AI plugins are built around the chat. This one is built around the note: yo
 piece of text, press a key, and the text changes. The chat is there too, in the right
 sidebar, but the main road is selection → key → done.
 
-*Читаете по-русски? Есть [русская версия README](README.ru.md).*
+*Читаете по-русски? Есть [русская версия README](https://github.com/mrrepac/ai-assist/blob/master/README.ru.md).*
 
 ## What it does
 
@@ -85,4 +85,4 @@ local server on your own machine.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](https://github.com/mrrepac/ai-assist/blob/master/LICENSE).

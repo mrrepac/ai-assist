@@ -2,6 +2,8 @@
 
 Чат с языковой моделью в правой панели и правка выделенного текста прямо в заметке.
 
+*Reading in English? Here is the [English README](https://github.com/mrrepac/ai-assist/blob/master/README.md).*
+
 **Плагин собран под тех, кто работает из России.** Все провайдеры в списке открываются
 без VPN и принимают российские карты: китайский DeepSeek напрямую и три отечественных
 агрегатора — Polza.ai, ChadGPT, GPTunnel, — через которые доступны GPT, Claude, Gemini и
@@ -82,4 +84,4 @@ Obsidian 1.8.7 или новее. Компьютер и телефон. Ключ
 
 ## Лицензия
 
-MIT — см. [LICENSE](LICENSE).
+MIT — см. [LICENSE](https://github.com/mrrepac/ai-assist/blob/master/LICENSE).
