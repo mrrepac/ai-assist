@@ -48,6 +48,12 @@ export interface AiAssistSettings {
   recentPrompts: string[];
   /** Открывать Obsidian с пустой лентой, не подхватывая вчерашний разговор. */
   freshStart: boolean;
+  /**
+   * Занимать ли Alt+1 под быстрое меню. Своя раскладка на чужой клавиатуре —
+   * навязанное решение, и гайдлайн каталога не зря её не рекомендует: команда
+   * и так доступна из палитры, а хоткей на неё вешается свой.
+   */
+  defaultHotkey: boolean;
 }
 
 /** Спецпункт быстрого меню — не действие, а отдельная команда плагина. */
@@ -184,6 +190,7 @@ export function defaultSettings(): AiAssistSettings {
     quickSlots: ["spelling", "expand", "clarify", "shorten", "evaluate"],
     recentPrompts: [],
     freshStart: true,
+    defaultHotkey: false,
   };
 }
 
@@ -250,6 +257,10 @@ export function mergeSettings(raw: unknown): AiAssistSettings {
       baseUrl: merged.baseUrl,
     };
   }
+
+  // Alt+1 перестал занимать себя сам, но у того, кто уже привык, он должен
+  // остаться: новая установка получает выключенный хоткей, прежняя — включённый.
+  if (typeof s.defaultHotkey !== "boolean") merged.defaultHotkey = true;
 
   merged.recentPrompts = Array.isArray(s.recentPrompts)
     ? s.recentPrompts.filter((p) => typeof p === "string").slice(0, 10)

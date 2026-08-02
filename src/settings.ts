@@ -160,6 +160,19 @@ export class AiAssistSettingTab extends PluginSettingTab {
         });
     });
 
+    new Setting(containerEl)
+      .setName(t("setHotkey"))
+      .setDesc(t("setHotkeyDesc"))
+      .addToggle((c) =>
+        c.setValue(s.defaultHotkey).onChange(async (v) => {
+          s.defaultHotkey = v;
+          await this.save();
+          // Команды регистрируются один раз при загрузке, поэтому вслух
+          // говорим, что клавиша появится не сию секунду.
+          new Notice(t("setHotkeyReload"), 6000);
+        }),
+      );
+
     // Каждое действие — ещё и команда, так что ему можно дать свой хоткей и
     // вызывать мимо меню.
     new Setting(containerEl)

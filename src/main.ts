@@ -128,8 +128,10 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     this.addCommand({
       id: "quick-menu",
       name: t("cmdQuick"),
-      // Хоткей по просьбе: Alt+1 — не занят ни Obsidian, ни соседними плагинами.
-      hotkeys: [{ modifiers: ["Alt"], key: "1" }],
+      // Alt+1 предлагается, а не навязывается: команды регистрируются один раз
+      // при загрузке, поэтому смена настройки доезжает после перезагрузки
+      // плагина. Своё назначение из настроек Obsidian сильнее умолчания всегда.
+      hotkeys: this.settings.defaultHotkey ? [{ modifiers: ["Alt"], key: "1" }] : [],
       editorCallback: (editor, view) => {
         if (view instanceof MarkdownView) this.openQuickMenu(editor, view);
       },

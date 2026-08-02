@@ -318,9 +318,14 @@ const en = {
   setSystemDesc: "Added to every request — tell the model who it is talking to and how.",
   setSystemPlaceholder: "You are helping to write and edit notes in Obsidian.",
   setHotkeysDesc:
-    "Every action is also a command: give it a hotkey and call it without the menu. The editor's " +
-    "right-click menu holds them all, including the ones outside these five.",
+    "Every action is also a command: give it a hotkey and call it without the menu. Actions that " +
+    "did not make it into these five keep their commands too.",
   setHotkeysBtn: "Open hotkeys",
+  setHotkey: "Take Alt+1 for the quick menu",
+  setHotkeyDesc:
+    "Off, the plugin claims no keys at all: open the quick menu from the command palette, or bind " +
+    "whatever suits you in the hotkey settings. Your own binding beats this default either way.",
+  setHotkeyReload: "The hotkey changes once the plugin is reloaded (or Obsidian restarts).",
   setUsage: "Show token usage",
   setUsageDesc: "Print how many tokens each answer cost under it.",
 
@@ -661,9 +666,14 @@ const ru: typeof en = {
   setSystemDesc: "Добавляется к каждому запросу — скажи модели, с кем и как она говорит.",
   setSystemPlaceholder: "Ты помогаешь писать и править заметки в Obsidian.",
   setHotkeysDesc:
-    "Каждое действие — ещё и команда: дай ей хоткей и вызывай мимо меню. В меню по правой кнопке " +
-    "в редакторе лежат все действия, включая те, что не попали в эту пятёрку.",
+    "Каждое действие — ещё и команда: дай ей хоткей и вызывай мимо меню. У действий, не попавших " +
+    "в эту пятёрку, команда тоже есть.",
   setHotkeysBtn: "Открыть горячие клавиши",
+  setHotkey: "Занять Alt+1 под быстрое меню",
+  setHotkeyDesc:
+    "Выключено — плагин не занимает клавиш вовсе: быстрое меню открывается из палитры команд, а " +
+    "хоткей на него вешается свой, какой удобно. Своё назначение сильнее умолчания в любом случае.",
+  setHotkeyReload: "Клавиша изменится после перезагрузки плагина (или перезапуска Obsidian).",
   setUsage: "Показывать расход токенов",
   setUsageDesc: "Под ответом выводится, во сколько токенов он обошёлся.",
 

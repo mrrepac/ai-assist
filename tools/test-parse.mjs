@@ -512,6 +512,16 @@ check(
   ["deepseek", "chadgpt", "gptunnel", "polza", "custom"],
 );
 
+// ——— хоткей по умолчанию ———
+// Своя клавиша на чужой клавиатуре — навязанное решение, поэтому новая
+// установка получает её выключенной. А у того, кто к Alt+1 уже привык, она
+// должна остаться: настройки без этого поля — признак прежней установки.
+check("новая установка без хоткея", mergeSettings(null).defaultHotkey, false);
+check("прежняя установка сохраняет Alt+1", mergeSettings({ freshStart: true }).defaultHotkey, true);
+check("выключенный вручную не включается обратно", mergeSettings({ defaultHotkey: false }).defaultHotkey, false);
+check("включённый вручную переживает загрузку", mergeSettings({ defaultHotkey: true }).defaultHotkey, true);
+check("мусор в поле чинится", mergeSettings({ defaultHotkey: "ага" }).defaultHotkey, true);
+
 // ——— чистая лента при запуске ———
 check("по умолчанию чат открывается пустым", mergeSettings(null).freshStart, true);
 check("выключенный режим переживает загрузку", mergeSettings({ freshStart: false }).freshStart, false);
