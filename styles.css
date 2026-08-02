@@ -1,0 +1,588 @@
+/* ——— панель чата ——— */
+
+.ai-assist-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+  gap: 0;
+}
+
+.ai-assist-chat .ai-list-wrap {
+  position: relative; /* якорь для кнопки «вниз» */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-assist-chat .ai-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-1);
+  padding: var(--size-4-2) var(--size-4-3);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ai-assist-chat .ai-bar-model {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: var(--size-2-1) var(--size-2-2);
+  cursor: pointer;
+}
+
+.ai-assist-chat .ai-bar-model:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.ai-assist-chat .ai-bar-btn.is-active {
+  color: var(--text-accent);
+}
+
+/* ——— кнопка «вниз» ——— */
+
+.ai-assist-chat .ai-down {
+  position: absolute;
+  right: var(--size-4-4);
+  bottom: var(--size-4-3);
+  z-index: 1;
+  display: none;
+  padding: var(--size-2-2);
+  border-radius: var(--radius-l);
+  background: var(--background-secondary-alt);
+  box-shadow: var(--shadow-s);
+}
+
+.ai-assist-chat .ai-down.is-visible {
+  display: flex;
+}
+
+.ai-assist-chat .ai-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--size-4-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-3);
+}
+
+.ai-assist-chat .ai-empty {
+  margin: auto;
+  max-width: 22em;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: var(--font-ui-small);
+}
+
+.ai-assist-chat .ai-msg-role {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  margin-bottom: var(--size-2-1);
+}
+
+.ai-assist-chat .ai-msg-body {
+  border-radius: var(--radius-m);
+  padding: var(--size-4-2) var(--size-4-3);
+  background: var(--background-secondary);
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
+.ai-assist-chat .ai-msg-user .ai-msg-body {
+  background: var(--background-modifier-hover);
+  white-space: pre-wrap;
+}
+
+.ai-assist-chat .ai-msg-body > :first-child {
+  margin-top: 0;
+}
+
+.ai-assist-chat .ai-msg-body > :last-child {
+  margin-bottom: 0;
+}
+
+/* пока идёт стрим — обычный текст, переносы сохраняем сами */
+.ai-assist-chat .ai-streaming {
+  white-space: pre-wrap;
+  color: var(--text-normal);
+}
+
+/*
+ * Сообщение об ошибке. Заливка --background-modifier-error густо-красная, она
+ * под белый текст кнопки «удалить»: вместе с --text-error получалось красное
+ * по красному. Берём ту же красноту, но прозрачной, — тогда текст читается и
+ * в светлой теме, и в тёмной.
+ */
+.ai-assist-chat .ai-error {
+  background: rgba(var(--color-red-rgb), 0.12);
+  color: var(--text-error);
+}
+
+.ai-assist-chat .ai-retry {
+  display: block;
+  margin-top: var(--size-4-2);
+}
+
+.ai-assist-chat .ai-think {
+  margin-bottom: var(--size-2-2);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.ai-assist-chat .ai-think summary {
+  cursor: pointer;
+  color: var(--text-faint);
+}
+
+.ai-assist-chat .ai-think-body {
+  white-space: pre-wrap;
+  padding: var(--size-4-2);
+  margin-top: var(--size-2-1);
+  border-left: 2px solid var(--background-modifier-border);
+  max-height: 14em;
+  overflow-y: auto;
+}
+
+.ai-assist-chat .ai-msg-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  margin-top: var(--size-2-2);
+}
+
+.ai-assist-chat .ai-msg-insert {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  padding: var(--size-2-1) var(--size-4-2);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+}
+
+.ai-assist-chat .ai-msg-insert-icon {
+  display: flex;
+}
+
+.ai-assist-chat .ai-msg-insert-icon .svg-icon {
+  width: 1em;
+  height: 1em;
+}
+
+.ai-assist-chat .ai-msg-usage {
+  margin-left: auto;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
+.ai-assist-chat .ai-foot {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2) var(--size-4-3);
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.ai-assist-chat .ai-input {
+  flex: 1;
+  resize: none;
+  min-height: 2.5em;
+  max-height: 200px;
+  font-size: var(--font-ui-small);
+}
+
+.ai-assist-chat .ai-send {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--size-4-2);
+}
+
+.ai-assist-chat .ai-send.is-stop {
+  background: var(--background-modifier-error);
+  color: var(--text-on-accent);
+}
+
+/* на телефоне пузыри шире, кнопки крупнее для пальца */
+.is-mobile .ai-assist-chat .ai-msg-foot {
+  opacity: 1;
+}
+
+/* ——— карточка правки ——— */
+
+.ai-assist-chat .ai-tool {
+  border: 1px solid var(--background-modifier-border);
+  border-left: 3px solid var(--text-accent);
+  border-radius: var(--radius-m);
+  padding: var(--size-4-2) var(--size-4-3);
+  background: var(--background-primary-alt);
+}
+
+.ai-assist-chat .ai-tool.is-applied {
+  border-left-color: var(--color-green);
+}
+
+.ai-assist-chat .ai-tool.is-rejected {
+  border-left-color: var(--text-faint);
+  opacity: 0.6;
+}
+
+.ai-assist-chat .ai-tool-head {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-medium);
+}
+
+.ai-assist-chat .ai-tool-icon {
+  display: flex;
+  color: var(--text-muted);
+}
+
+.ai-assist-chat .ai-tool-icon .svg-icon {
+  width: 1em;
+  height: 1em;
+}
+
+.ai-assist-chat .ai-tool-title {
+  flex: 1;
+}
+
+.ai-assist-chat .ai-tool-status {
+  font-size: var(--font-ui-smaller);
+  font-weight: normal;
+  color: var(--text-faint);
+}
+
+/* ——— список действий и правка действия ——— */
+
+.ai-act-icon {
+  display: inline-flex;
+  vertical-align: -0.15em;
+  margin-right: var(--size-2-2);
+  color: var(--text-muted);
+}
+
+.ai-act-icon .svg-icon {
+  width: 1em;
+  height: 1em;
+}
+
+.ai-action-modal .ai-icon-preview {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.ai-action-modal textarea {
+  width: 100%;
+  font-family: var(--font-text);
+}
+
+.ai-assist-chat .ai-tool-path {
+  margin-top: var(--size-2-1);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  word-break: break-all;
+}
+
+.ai-assist-chat .ai-tool-preview {
+  margin-top: var(--size-2-2);
+  padding: var(--size-2-2) var(--size-4-2);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  font-size: var(--font-ui-smaller);
+  white-space: pre-wrap;
+  max-height: 12em;
+  overflow-y: auto;
+  color: var(--text-muted);
+}
+
+.ai-assist-chat .ai-tool-buttons {
+  display: flex;
+  gap: var(--size-2-2);
+  margin-top: var(--size-2-2);
+}
+
+.ai-assist-chat .ai-tool-buttons:empty {
+  display: none;
+}
+
+/* ——— быстрое меню (Alt+1) ——— */
+
+.ai-quick-modal {
+  width: min(34em, 92vw);
+}
+
+.ai-quick-selection {
+  padding: var(--size-2-2) var(--size-4-2);
+  margin-bottom: var(--size-4-2);
+  border-left: 2px solid var(--background-modifier-border);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  max-height: 4.5em;
+  overflow: hidden;
+}
+
+.ai-quick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--size-4-3);
+}
+
+.ai-quick-item {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  width: 100%;
+  padding: var(--size-2-3) var(--size-4-2);
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  font-size: var(--font-ui-small);
+  color: var(--text-normal);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ai-quick-item:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ai-quick-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-quick-key {
+  flex: 0 0 auto;
+  min-width: 1.8em;
+  text-align: center;
+  font-weight: var(--font-bold);
+  font-size: var(--font-ui-smaller);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  color: var(--text-accent);
+}
+
+.ai-quick-icon {
+  display: flex;
+  color: var(--text-muted);
+}
+
+.ai-quick-icon .svg-icon {
+  width: 1em;
+  height: 1em;
+}
+
+.ai-quick-input {
+  width: 100%;
+  resize: vertical;
+  font-family: var(--font-text);
+}
+
+.ai-quick-hint {
+  margin-top: var(--size-2-2);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
+/* ——— настройки ——— */
+
+.ai-setting-stacked {
+  display: block;
+}
+
+.ai-setting-stacked .setting-item-control {
+  padding-top: var(--size-4-2);
+  width: 100%;
+}
+
+.ai-setting-stacked textarea {
+  width: 100%;
+  font-family: var(--font-text);
+  resize: vertical;
+}
+
+.ai-action-modal textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.ai-prompt-input {
+  width: 100%;
+}
+
+/* ——— журнал правок ——— */
+
+.ai-assist-chat .ai-log {
+  border-left: 3px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  padding: var(--size-2-2) var(--size-4-2);
+  background: var(--background-secondary);
+  font-size: var(--font-ui-smaller);
+}
+
+.ai-assist-chat .ai-log.is-running {
+  border-left-color: var(--text-accent);
+}
+
+.ai-assist-chat .ai-log.is-error {
+  border-left-color: var(--text-error);
+}
+
+.ai-assist-chat .ai-log.is-undone {
+  opacity: 0.55;
+}
+
+.ai-assist-chat .ai-log-head {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+}
+
+.ai-assist-chat .ai-log-icon {
+  display: flex;
+  color: var(--text-muted);
+}
+
+.ai-assist-chat .ai-log-icon .svg-icon {
+  width: 1em;
+  height: 1em;
+}
+
+.ai-assist-chat .ai-log.is-running .ai-log-icon {
+  color: var(--text-accent);
+  animation: ai-spin 1.4s linear infinite;
+}
+
+@keyframes ai-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ai-assist-chat .ai-log-title {
+  font-weight: var(--font-medium);
+}
+
+.ai-assist-chat .ai-log-status {
+  flex: 1;
+  color: var(--text-faint);
+}
+
+.ai-assist-chat .ai-log-stop,
+.ai-assist-chat .ai-log-undo {
+  padding: 0 var(--size-4-2);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+}
+
+.ai-assist-chat .ai-log-text {
+  margin-top: var(--size-2-2);
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  max-height: 8em;
+  overflow: hidden;
+}
+
+.ai-assist-chat .ai-log-error {
+  margin-top: var(--size-2-2);
+  color: var(--text-error);
+}
+
+/* ——— правки в потоке текста ——— */
+
+.ai-assist-chat .ai-diff {
+  margin-top: var(--size-2-2);
+  padding: var(--size-2-2) var(--size-4-2);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 18em;
+  overflow-y: auto;
+}
+
+/* Уцелевший текст — фон, а не содержание: он здесь только ради ориентира. */
+.ai-assist-chat .ai-diff-same {
+  color: var(--text-faint);
+}
+
+.ai-assist-chat .ai-diff-del,
+.ai-assist-chat .ai-diff-ins {
+  border-radius: var(--radius-s);
+  padding: 0.05em 0.15em;
+  text-decoration: none;
+}
+
+.ai-assist-chat .ai-diff-del {
+  color: var(--text-muted);
+  background: rgba(var(--color-red-rgb), 0.13);
+  text-decoration: line-through;
+  text-decoration-color: rgba(var(--color-red-rgb), 0.65);
+}
+
+.ai-assist-chat .ai-diff-ins {
+  color: var(--text-normal);
+  background: rgba(var(--color-green-rgb), 0.16);
+}
+
+.ai-assist-chat .ai-diff-gap {
+  color: var(--text-faint);
+  opacity: 0.6;
+}
+
+.ai-assist-chat .ai-log-more {
+  margin-top: var(--size-2-1);
+  color: var(--text-faint);
+}
+
+.ai-assist-chat .ai-log-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  margin-top: var(--size-2-2);
+}
+
+.ai-assist-chat .ai-log-usage {
+  margin-left: auto;
+  color: var(--text-faint);
+}
+
+/* ——— статус-бар ——— */
+
+.ai-status {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-1);
+  cursor: pointer;
+  color: var(--text-accent);
+}
+
+.ai-status-icon {
+  display: flex;
+}
+
+.ai-status-icon .svg-icon {
+  width: 1em;
+  height: 1em;
+}

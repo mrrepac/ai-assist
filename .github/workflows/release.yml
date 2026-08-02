@@ -1,0 +1,59 @@
+name: Release Obsidian plugin
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Build plugin
+        run: |
+          npm ci
+          npm run build
+
+      # a red test stops the release: better a tag with no release behind it
+      # than a release that mangles someone's notes
+      - name: Run tests
+        run: npm test
+
+      # Provenance depends on Sigstore's transparency log; when that service is
+      # down the attestation must not hold the release hostage.
+      - name: Attest build provenance for release assets
+        uses: actions/attest-build-provenance@v2
+        continue-on-error: true
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
+
+      - name: Create release with plugin assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Use hand-written notes if release-notes/<tag>.md exists, else
+          # auto-generate a changelog from commits since the previous tag.
+          if [ -f "release-notes/$TAG.md" ]; then
+            NOTES=(--notes-file "release-notes/$TAG.md")
+          else
+            NOTES=(--generate-notes)
+          fi
+          gh release create "$TAG" \
+            --title "$TAG" \
+            "${NOTES[@]}" \
+            main.js manifest.json styles.css

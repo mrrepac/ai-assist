@@ -1,0 +1,153 @@
+import { t } from "./i18n";
+
+/**
+ * Что делать с ответом модели:
+ *  replace — заменить выделение (откат обычным Ctrl+Z);
+ *  append  — вставить под выделением, оригинал остаётся;
+ *  chat    — ничего не трогать в заметке, показать в панели справа.
+ */
+export type ActionMode = "replace" | "append" | "chat";
+
+export interface AiAction {
+  id: string;
+  name: string;
+  /** Системный промпт. {lang} подставляется языком перевода из настроек. */
+  prompt: string;
+  mode: ActionMode;
+  /** Иконка для меню редактора (набор lucide). */
+  icon: string;
+  /** Встроенные действия нельзя удалить, но промпт можно переписать. */
+  builtin?: boolean;
+  /**
+   * Плагин делает эту правку сам, без запроса к модели, — промпта у неё нет.
+   * Такое действие живёт в общем списке, чтобы у него были кнопка в меню, слот
+   * быстрого меню и своя команда с хоткеем.
+   */
+  local?: boolean;
+}
+
+/** Заготовки создаются на языке интерфейса — их видно и правится в настройках. */
+export function defaultActions(): AiAction[] {
+  return [
+    {
+      id: "spelling",
+      name: t("actSpelling"),
+      prompt: t("actSpellingPrompt"),
+      mode: "replace",
+      icon: "spell-check",
+      builtin: true,
+    },
+    {
+      id: "format",
+      name: t("actFormat"),
+      prompt: "",
+      mode: "replace",
+      icon: "eraser",
+      builtin: true,
+      local: true,
+    },
+    {
+      id: "clarify",
+      name: t("actClarify"),
+      prompt: t("actClarifyPrompt"),
+      mode: "replace",
+      icon: "wand-sparkles",
+      builtin: true,
+    },
+    {
+      id: "expand",
+      name: t("actExpand"),
+      prompt: t("actExpandPrompt"),
+      mode: "replace",
+      icon: "expand",
+      builtin: true,
+    },
+    {
+      id: "shorten",
+      name: t("actShorten"),
+      prompt: t("actShortenPrompt"),
+      mode: "replace",
+      icon: "scissors",
+      builtin: true,
+    },
+    {
+      id: "evaluate",
+      name: t("actEvaluate"),
+      prompt: t("actEvaluatePrompt"),
+      mode: "chat",
+      icon: "clipboard-check",
+      builtin: true,
+    },
+    {
+      id: "transcript",
+      name: t("actTranscript"),
+      prompt: t("actTranscriptPrompt"),
+      mode: "replace",
+      icon: "mic",
+      builtin: true,
+    },
+  ];
+}
+
+/** Заготовка для своего действия: id случайный, чтобы не столкнуться с чужим. */
+export function newAction(): AiAction {
+  return {
+    id: "custom-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    name: t("actNewName"),
+    prompt: "",
+    mode: "replace",
+    icon: "sparkles",
+  };
+}
+
+/** Заводский промпт встроенного действия — для кнопки «Сбросить промпт». */
+export function factoryPrompt(id: string): string | null {
+  return defaultActions().find((a) => a.id === id)?.prompt ?? null;
+}
+
+/** Инструкция-хвост для правящих действий: без неё модель любит поболтать. */
+export function systemFor(action: AiAction, targetLang: string): string {
+  const prompt = action.prompt.replace(/\{lang\}/g, targetLang);
+  if (action.mode === "chat") return prompt;
+  return prompt + "\n\n" + t("promptOnlyText");
+}
+
+const FENCE = /^```[^\n]*\n([\s\S]*?)\n?```$/;
+const QUOTED = /^(["'«“„])([\s\S]*)(["'»”“])$/;
+
+/**
+ * Ответ модели → текст, который не стыдно положить в заметку.
+ * Снимаем обёртки, которых не было в оригинале, и возвращаем пробелы по краям
+ * выделения: пользователь часто цепляет отступ или перевод строки, и без этого
+ * замена склеивает слова с соседними.
+ */
+export function cleanReply(raw: string, original: string): string {
+  let out = raw.trim();
+
+  // Обёртка ```…``` — только если исходник не был блоком кода.
+  if (!original.trim().startsWith("```")) {
+    const fenced = out.match(FENCE);
+    if (fenced) out = fenced[1].trim();
+  }
+
+  // Кавычки вокруг всего ответа — только если оригинал не был в кавычках и
+  // внутри нет закрывающей кавычки того же вида (иначе это часть текста).
+  const q = out.match(QUOTED);
+  if (q && !QUOTED.test(original.trim()) && !q[2].includes(q[1]) && !q[2].includes(q[3])) {
+    out = q[2].trim();
+  }
+
+  const lead = original.match(/^\s*/)?.[0] ?? "";
+  const tail = original.match(/\s*$/)?.[0] ?? "";
+  return lead + out + tail;
+}
+
+/** Есть ли в выделении хоть что-то осмысленное. */
+export function hasText(s: string): boolean {
+  return s.trim().length > 0;
+}
+
+/** Короткая подпись действия для уведомлений и статус-бара. */
+export function shortName(action: AiAction): string {
+  return action.name.length > 28 ? action.name.slice(0, 27) + "…" : action.name;
+}

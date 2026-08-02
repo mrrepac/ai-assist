@@ -1,0 +1,30 @@
+{
+  "name": "ai-assist",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Obsidian plugin: sidebar AI chat and in-place rewriting of the selected text.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "test": "node tools/test-parse.mjs"
+  },
+  "keywords": [
+    "obsidian-plugin",
+    "ai",
+    "llm",
+    "deepseek"
+  ],
+  "author": "mrrepac",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^16.11.6",
+    "esbuild": "0.17.3",
+    "obsidian": "latest",
+    "tslib": "2.4.0",
+    "typescript": "4.7.4"
+  },
+  "allowScripts": {
+    "esbuild@0.17.3": true
+  }
+}
