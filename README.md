@@ -16,13 +16,16 @@ sidebar, but the main road is selection → key → done.
 
 ## What it does
 
-- **Actions over the selection.** Fix spelling, make it clearer, expand, shorten,
-  evaluate, clean up a transcript — or write your own prompt. The result replaces the
-  selected text; the undo is the usual `Ctrl+Z`.
-- **Quick menu** (`Alt+1`) opens over the selection: keys `1`–`9` run your presets,
-  and the field below takes a one-off instruction. The digit only picks a preset while the
-  field is empty, so a prompt can start with a number. The physical key is what counts, so
-  any keyboard layout works.
+- **Actions over the selection.** Fix spelling, improve the text, expand it, shorten it,
+  evaluate it — or write your own prompt. The result replaces the selected text; the undo
+  is the usual `Ctrl+Z`.
+- **Quick menu** (`Alt+1`) opens over the selection: the digits run your presets — five
+  keys to begin with, up to nine if you add them — and the field below takes a one-off
+  instruction. The digit only picks a preset while the field is empty, so a prompt can
+  start with a number. The physical key is what counts, so any keyboard layout works.
+- **Ask about a fragment.** Select a piece of a note and go to the chat: it comes along as
+  an attachment, so the question can be just "and shorter?" — and the fragment stays with
+  the conversation for the questions that follow.
 - **A journal of edits** in the side panel: what ran, what came back, what exactly changed
   (word-level diff, "was → became") and an "Undo the edit" button.
 - **Chat in the right sidebar** with streaming, thinking blocks, the running cost in
@@ -61,7 +64,8 @@ Everything lives in three sections:
 - **Behaviour** — temperature, response length limit, streaming, thinking (DeepSeek),
   what to do when nothing is selected (the whole note / the paragraph under the cursor /
   nothing), token usage display, note editing tools, the system prompt for the chat.
-- **Quick menu** — the nine slots. Each slot is an action, and this is where an action is
+- **Quick menu** — the keys: five by default, more if you add them, and a row can be
+  dragged by its handle. Each key is an action, and this is where an action is
   edited: name, icon, prompt, and what to do with the answer. Your own action is created
   in a slot too. An action taken off a slot is not lost — it keeps its own command, and a
   command can be given a hotkey.

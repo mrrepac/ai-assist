@@ -4,106 +4,37 @@ const en = {
   // ——— действия (заготовки) ———
   actSpelling: "Fix spelling",
   actSpellingPrompt:
-    "You are proofreading someone's personal notes. Your job is correctness only — nothing else.\n\n" +
-    "Fix: spelling, punctuation, typos, doubled or missing spaces, capitalisation, a hyphen " +
-    "where a dash is meant, stray letters from the wrong keyboard layout.\n\n" +
-    "Do not touch: style, word order, vocabulary, sentence length and rhythm, slang, profanity, " +
-    "jargon, coined words, deliberate repetition, colloquial turns. Do not merge or split " +
-    "sentences, do not swap words for synonyms, do not add or remove anything.\n\n" +
-    "Preserve the markup character for character: markdown symbols, indentation, line breaks and " +
-    "blank lines, ==highlights==, code blocks with their contents, URLs, formulas, #tags. Never " +
-    "change a single character inside [[double square brackets]] — those are file names, and " +
-    "editing them breaks the links between notes; in a [[file|label]] link edit the label only.\n\n" +
-    "Poems, songs, lines of dialogue: a line ending without a full stop, a dash instead of a comma, " +
-    "a lower-case letter starting a line — these are the author's devices, not mistakes. Never " +
-    "change how the text is broken into lines.\n\n" +
-    "If the text is in another language, fix it by that language's rules. If there is nothing to " +
-    "fix, return it verbatim. When in doubt, leave it as it is.",
-  actClarify: "Make it clearer",
+    "Act as a professional proofreader. Fix every grammatical, spelling and punctuation mistake in " +
+    "the text below. Keep the original meaning, the sentence structure and the author's style " +
+    "strictly intact. Rewrite nothing — only fix the mistakes.",
+  actClarify: "Improve the text",
   actClarifyPrompt:
-    "You are an editor. Rewrite the text so it reads easily the first time — but it must stay the " +
-    "author's text, not yours.\n\n" +
-    "Remove: bureaucratese, clichés, filler words, tautology, chains of nouns, the passive where " +
-    "the active is asking for it, empty introductory turns, the same thought said twice in " +
-    "different words.\n\n" +
-    "Keep: the author's voice and intonation, the vocabulary (slang, profanity and jargon are there " +
-    "for a reason), the images and the jokes, every thought and its order, roughly the same length " +
-    "— this is not an exercise in cutting.\n\n" +
-    "Rule of intervention: if a sentence already reads easily, do not touch it at all. Fix only " +
-    "what trips the reader up.\n\n" +
-    "Do not add new thoughts, do not draw conclusions on the author's behalf, do not shift it into " +
-    "business or “literary” style.\n\n" +
-    "Preserve the markup character for character: markdown, [[wiki links]] (not a character inside " +
-    "the brackets), #tags, code blocks, line breaks and paragraphs. In poems and songs leave the " +
-    "line breaks, the rhythm and the rhyme alone — there, being hard to parse can be the point.",
-  actExpand: "Expand",
+    "Act as an experienced editor. Rewrite this text to improve its style, readability and flow. " +
+    "Get rid of bureaucratese and tautology, make the sentences more rhythmic and the text itself " +
+    "convincing and beautiful.",
+  actExpand: "Expand the text",
   actExpandPrompt:
-    "You are an editor. Develop the text: make it fuller without inventing on the author's behalf.\n\n" +
-    "Aim for about half again as long. If the text is already dense with detail, add less — length " +
-    "is not the goal.\n\n" +
-    "Develop: a thought compressed to a hint, a conclusion whose reasoning is missing, a claim with " +
-    "no example, a list where every item is a single word, any place where the reader stumbles over " +
-    "what was left unsaid.\n\n" +
-    "What to develop it with: detail the text already implies, an example from the same range as the " +
-    "ones there, the missing link of an argument, something the author clearly saw but did not write " +
-    "down.\n\n" +
-    "Do not add: new thoughts and conclusions, facts, figures, names and events that are not in the " +
-    "text, general reasoning about the subject at large, introductory turns for the sake of length, " +
-    "the same thing said twice in different words.\n\n" +
-    "Keep: the author's voice and intonation — what you add must not sound like someone else wrote " +
-    "it — the vocabulary (slang, profanity and jargon), the images and the jokes, the order of " +
-    "thoughts, the markdown markup, [[wiki links]] (not a character inside the brackets), #tags, code " +
-    "blocks and the paragraph structure.\n\n" +
-    "Poems and songs: hold the metre, the rhythm and the rhyme scheme; add whole lines or stanzas " +
-    "rather than inserting inside a line.\n\n" +
-    "If you cannot see what could honestly be added, leave it as it is.",
-  actShorten: "Shorten",
+    "Expand and develop the following text. Open the subject up in more detail: add fitting " +
+    "specifics, sound arguments and examples. Make the text deeper, fuller and more interesting to " +
+    "read, keeping the original thought.",
+  actShorten: "Shorten the text",
   actShortenPrompt:
-    "You are an editor. Compress the text without losing a single thought.\n\n" +
-    "Aim for about a third shorter. If the text is already dense, cut less — but honestly, not by " +
-    "throwing meaning away.\n\n" +
-    "Cut: repetition, spelling out the obvious, duplicate examples (keep the strongest), " +
-    "introductory turns, parenthetical asides that are clear without them, adjectives that add " +
-    "nothing.\n\n" +
-    "Do not cut: facts, figures, names, the qualifiers “but”, “except”, “if” — they carry meaning — " +
-    "and the author's images and jokes when they hold the text up.\n\n" +
-    "Keep: the author's voice and intonation, the vocabulary, the order of thoughts, the markdown " +
-    "markup, [[wiki links]] (not a character inside the brackets), #tags, code blocks, and the " +
-    "paragraph structure. In poems and songs cut by whole stanzas rather than breaking the rhythm.\n\n" +
-    "Do not retell in your own words what can stay as it is.",
-  actTranscript: "Clean up transcript",
-  actTranscriptPrompt:
-    "The text is an automatic transcript of speech. Make it readable without turning it into a " +
-    "summary.\n\n" +
-    "Remove: empty filler words, hesitation sounds, a word repeated twice in a row, slips together " +
-    "with their self-correction (keep the corrected version), phrases abandoned mid-sentence.\n\n" +
-    "Add: punctuation, capital letters, paragraph breaks by meaning. An enumeration that is spoken " +
-    "as a list becomes a list. Dialogue and quotes get quotation marks or dashes.\n\n" +
-    "Keep: every thought and its order, the author's own expressions, images and jokes, the living " +
-    "spoken intonation. A turn like “and then it hit me” is the author's voice, not noise.\n\n" +
-    "Fix obvious recognition errors when the right word is clear from context: homophones, names, " +
-    "terms, numbers. If it is not clear, leave it — do not invent.\n\n" +
-    "Never: shorten the content, generalise, add anything of your own, or rewrite it into bookish " +
-    "or bureaucratic style. Not one thought may be lost and not one new one may appear.",
+    "Squeeze the essence out of this text. Shorten it by removing all the padding, the digressions " +
+    "and the needless repetition. Keep only the key facts and the main thought, making the text as " +
+    "concise and easy to read as possible.",
   actEvaluate: "Evaluate the text",
   actEvaluatePrompt:
-    "You are an editor going through someone's draft.\n\n" +
-    "First work out the genre — a note, a song, a poem, a line for the stage, a letter, a post, a " +
-    "raw thought — and judge it by the laws of that genre, not by “rules of good writing” in " +
-    "general.\n\n" +
-    "Answer in three parts:\n\n" +
-    "**What holds it up** — the specific places the text stands on, quoted. If there is nothing, " +
-    "say so instead of inventing merits.\n\n" +
-    "**What gets in the way** — weak places, quoted, with what exactly is wrong: a cliché, a blurry " +
-    "image, a sagging rhythm, a thought that gets lost, a paragraph too many, broken logic, the " +
-    "wrong intonation.\n\n" +
-    "**What to do** — two to four concrete steps. For one or two of the weakest lines, show how " +
-    "they could be rewritten.\n\n" +
-    "Quote, do not paraphrase. Do not praise out of politeness, do not soften — and do not savage " +
-    "it for the sake of a sharp line either. Do not rewrite the whole text: your job is to explain, " +
-    "not to replace the author. Do not discuss what is not in the text. No filler like “decent " +
-    "overall, but there is room to improve”.\n\n" +
-    "Be brief: a few sentences per part. Answer in the language of the text.",
+    "Give this text a strict critical analysis. Judge its structure, clarity, logic and style. " +
+    "Point out the strong sides, then write a concrete numbered list of recommendations: what " +
+    "exactly to fix and how, to make the text perfect.",
+  promptKeepMarkup:
+    "The text comes from a note, so preserve its markup character for character: markdown symbols, " +
+    "indentation, line breaks and blank lines, ==highlights==, code blocks with their contents, " +
+    "URLs, formulas and #tags. Never change a single character inside [[double square brackets]] — " +
+    "those are file names, and editing them breaks the links between notes; in a [[file|label]] " +
+    "link edit the label only. In poems and songs never change how the text is broken into lines: " +
+    "a line without a full stop, a dash instead of a comma or a lower-case letter starting a line " +
+    "is the author's device, not a mistake.",
   promptOnlyText:
     "Your reply must contain the resulting text ONLY, exactly as it should sit in the note: no " +
     "preamble, no closing remarks, no explanation of what you changed, no alternatives to choose " +
@@ -118,18 +49,20 @@ const en = {
   cmdQuick: "Quick menu over the selection",
   quickTitle: "What to do with the text",
   quickPlaceholder: "Write your own instruction…",
-  quickHint: "1–9 — a preset · Enter — rewrite the text · Ctrl+Enter — answer in the chat · ↑ — previous prompts",
-  quickHintMac: "1–9 — a preset · Enter — rewrite the text · ⌘Enter — answer in the chat · ↑ — previous prompts",
+  quickHint: "A digit — a preset · Enter — rewrite the text · Ctrl+Enter — answer in the chat · ↑ — previous prompts",
+  quickHintMac: "A digit — a preset · Enter — rewrite the text · ⌘Enter — answer in the chat · ↑ — previous prompts",
   quickHead: "Quick menu",
   quickDesc:
-    "Alt+1 opens a window over the selected text: type your own instruction, or press 1–9 for " +
-    "a preset. The digit only picks a preset while the field is empty, so a prompt can start " +
-    "with a number. The physical key matters, not the character, so any layout works.\n\n" +
-    "This is also where an action is edited: pick it in a slot and press the pencil — name, icon, " +
-    "prompt and what to do with the answer. An action taken off a slot is not lost: it keeps its " +
-    "own command, and a command can be given a hotkey.",
+    "Alt+1 opens a window over the selected text: type your own instruction, or press a digit " +
+    "for a preset. The digit only picks a preset while the field is empty, so a prompt can " +
+    "start with a number. The physical key matters, not the character, so any layout works.\n\n" +
+    "There are five keys to begin with, and up to nine if you add them. Drag a row by its " +
+    "handle to move an action to another key. The pencil opens the action itself: name, icon, " +
+    "prompt and what to do with the answer. An action taken off a key is not lost: it keeps " +
+    "its own command, and a command can be given a hotkey.",
   quickSlot: "Key {key}",
-  quickPrompt: "Prompt of “{name}”",
+  quickAddKey: "Add a key",
+  quickDropKey: "Remove key {key}",
   quickNone: "— empty —",
   quickAsk: "Ask about the selection (chat)",
   quickNew: "+ New action…",
@@ -151,6 +84,10 @@ const en = {
   chatCleared: "Chat cleared",
   chatUndoClear: "Click to bring it back",
   chatContextClipped: "The note is long — only its beginning went into the context.",
+  chatAttachSize: "{chars} chars",
+  chatAttachDrop: "Do not ask about this fragment",
+  chatAttached: "Selected fragment ({chars} chars)",
+  chatNoteFragment: "About the fragment:",
   chatCopied: "Copied",
   chatInserted: "Inserted into the note",
   chatNoEditor: "Open a note to insert the answer into",
@@ -322,7 +259,7 @@ const en = {
   setSystemPlaceholder: "You are helping to write and edit notes in Obsidian.",
   setHotkeysDesc:
     "Every action is also a command: give it a hotkey and call it without the menu. Actions that " +
-    "did not make it into these five keep their commands too.",
+    "did not get a key keep their commands too.",
   setHotkeysBtn: "Open hotkeys",
   setHotkey: "Take Alt+1 for the quick menu",
   setHotkeyDesc:
@@ -365,100 +302,36 @@ const ru: typeof en = {
   // ——— действия (заготовки) ———
   actSpelling: "Исправить орфографию",
   actSpellingPrompt:
-    "Ты вычитываешь личные заметки. Твоя работа — только правописание, ничего сверх того.\n\n" +
-    "Исправляй: орфографию, пунктуацию, опечатки, удвоенные и пропущенные пробелы, регистр букв, " +
-    "дефис там, где по смыслу тире, случайные латинские буквы в русском слове.\n\n" +
-    "Не трогай: стиль, порядок слов, лексику, длину и ритм фраз, сленг, мат, жаргон, авторские " +
-    "словечки, намеренные повторы, разговорные обороты. Не объединяй и не разбивай предложения, " +
-    "не заменяй слова синонимами, ничего не добавляй и не выбрасывай.\n\n" +
-    "Разметку сохраняй посимвольно: знаки markdown, отступы, переносы строк и пустые строки, " +
-    "==выделения==, блоки кода вместе с содержимым, ссылки, формулы, #теги. Ни одной буквы не " +
-    "меняй внутри [[двойных квадратных скобок]] — это имена файлов, и правка рвёт связи между " +
-    "заметками; в ссылке вида [[файл|подпись]] правь только подпись.\n\n" +
-    "Стихи, песни, реплики: строка без точки в конце, тире вместо запятой, строчная буква в начале " +
-    "строки — это авторский приём, а не ошибка. Разбивку на строки не меняй никогда.\n\n" +
-    "Текст не на русском — правь по нормам его языка. Исправлять нечего — верни его дословно. " +
-    "Сомневаешься — оставь как есть.",
-  actClarify: "Сделать понятнее",
+    "Действуй как профессиональный корректор. Исправь все грамматические, орфографические и " +
+    "пунктуационные ошибки в тексте ниже. Строго сохрани исходный смысл, структуру предложений и " +
+    "авторский стиль. Ничего не переписывай, только исправь ошибки.",
+  actClarify: "Улучшить текст",
   actClarifyPrompt:
-    "Ты редактор. Перепиши текст так, чтобы он читался легко с первого раза, — но это должен " +
-    "остаться текст автора, а не твой.\n\n" +
-    "Убирай: канцелярит, штампы, слова-паразиты, тавтологию, нанизывание родительных падежей, " +
-    "страдательный залог там, где просится действительный, пустые вводные обороты, одну и ту же " +
-    "мысль, сказанную дважды разными словами.\n\n" +
-    "Сохраняй: голос и интонацию автора, лексику (сленг, мат и жаргон стоят там не случайно), " +
-    "образы и шутки, все мысли и их порядок, примерный объём — сокращение здесь не задача.\n\n" +
-    "Мера вмешательства: фраза и так читается легко — не трогай её вовсе. Правь только то, обо что " +
-    "спотыкаешься.\n\n" +
-    "Не добавляй новых мыслей, не делай выводов за автора, не сдвигай текст в деловой или " +
-    "«литературный» стиль.\n\n" +
-    "Разметку сохраняй посимвольно: markdown, [[вики-ссылки]] (ни буквы внутри скобок), #теги, " +
-    "блоки кода, переносы строк и абзацы. В стихах и песнях не трогай разбивку на строки, ритм и " +
-    "рифму — там непрозрачность бывает приёмом.",
-  actExpand: "Расширить",
+    "Выступи в роли опытного редактора. Перепиши этот текст так, чтобы улучшить его стилистику, " +
+    "читабельность и плавность. Избавься от канцеляризмов и тавтологии, сделай предложения более " +
+    "ритмичными, а сам текст — убедительным и красивым.",
+  actExpand: "Расширить текст",
   actExpandPrompt:
-    "Ты редактор. Разверни текст: сделай его полнее, не сочиняя за автора.\n\n" +
-    "Ориентир — примерно в полтора раза длиннее. Если текст и так подробный, добавь меньше: объём " +
-    "здесь не цель.\n\n" +
-    "Разворачивай: мысль, сжатую до намёка; вывод, к которому не показан ход; утверждение без " +
-    "примера; перечисление, где каждый пункт брошен одним словом; место, где читатель спотыкается о " +
-    "недосказанность.\n\n" +
-    "Чем разворачивать: подробностью, которая уже подразумевается в тексте, примером того же ряда, " +
-    "что уже есть, недостающим звеном рассуждения, деталью, которую автор явно видел, но не " +
-    "записал.\n\n" +
-    "Не добавляй: новых мыслей и выводов, фактов, цифр, имён и событий, которых в тексте нет, общих " +
-    "рассуждений о предмете вообще, вводных оборотов ради объёма, одной и той же мысли, сказанной " +
-    "дважды разными словами.\n\n" +
-    "Сохраняй: голос и интонацию автора — дописанное не должно быть слышно как чужое, — лексику " +
-    "(сленг, мат и жаргон), образы и шутки, порядок мыслей, разметку markdown, [[вики-ссылки]] (ни " +
-    "буквы внутри скобок), #теги, блоки кода и разбивку на абзацы.\n\n" +
-    "Стихи и песни: держи размер, ритм и способ рифмовки; добавляй целыми строками и строфами, а не " +
-    "вставками внутрь строки.\n\n" +
-    "Не видишь, что можно дописать честно, — оставь как есть.",
-  actShorten: "Сократить",
+    "Расширь и дополни следующий текст. Раскрой тему подробнее: добавь уместные детали, логичные " +
+    "аргументы и примеры. Сделай текст более глубоким, развёрнутым и интересным для чтения, " +
+    "сохраняя исходную мысль.",
+  actShorten: "Сократить текст",
   actShortenPrompt:
-    "Ты редактор. Сожми текст, не потеряв ни одной мысли.\n\n" +
-    "Ориентир — примерно на треть короче. Если текст и так плотный, сократи меньше, но честно, а не " +
-    "за счёт выброшенного смысла.\n\n" +
-    "Режь: повторы, разжёвывание очевидного, примеры-дубли (оставляй сильнейший), вводные обороты, " +
-    "уточнения в скобках, если и без них ясно, прилагательные, которые ничего не добавляют.\n\n" +
-    "Не режь: факты, цифры, имена, оговорки «но», «кроме», «если» — они несут смысл, — а также " +
-    "авторские образы и шутки, если на них текст держится.\n\n" +
-    "Сохраняй: голос и интонацию автора, лексику, порядок мыслей, разметку markdown, " +
-    "[[вики-ссылки]] (ни буквы внутри скобок), #теги, блоки кода и разбивку на абзацы. В стихах и " +
-    "песнях сокращай целыми строфами, а не ломая ритм.\n\n" +
-    "Не пересказывай своими словами то, что можно оставить как есть.",
-  actTranscript: "Почистить расшифровку",
-  actTranscriptPrompt:
-    "Текст — автоматическая расшифровка устной речи. Сделай её читаемой, не превращая в пересказ.\n\n" +
-    "Убери: пустые слова-паразиты (ну, вот, как бы, типа, значит, короче, это самое), звуки-заминки, " +
-    "повтор слова подряд, оговорки вместе с самоисправлением — оставляй итоговый вариант, " +
-    "фразы, брошенные на полуслове.\n\n" +
-    "Расставь: пунктуацию, заглавные буквы, абзацы по смысловым кускам. Перечисление, которое в " +
-    "речи звучит списком, оформи списком. Диалог и цитаты — тире или кавычками.\n\n" +
-    "Сохрани: все мысли и их порядок, авторские выражения, образы и шутки, живую разговорную " +
-    "интонацию. Оборот вроде «и тут до меня дошло» — это голос автора, а не мусор.\n\n" +
-    "Исправляй явные ошибки распознавания, когда верное слово очевидно из контекста: омофоны, " +
-    "имена, термины, числа. Не очевидно — оставь как есть, выдумывать нельзя.\n\n" +
-    "Запрещено: сокращать содержание, обобщать, дописывать своё, переводить в книжный стиль или " +
-    "канцелярит. Ни одна мысль не должна пропасть, ни одной новой — появиться.",
+    "Выжми из этого текста самую суть. Сократи его, убрав всю «воду», лирические отступления и " +
+    "лишние повторения. Оставь только ключевые факты и главную мысль, сделав текст максимально " +
+    "лаконичным и легко читаемым.",
   actEvaluate: "Оценить текст",
   actEvaluatePrompt:
-    "Ты редактор, разбирающий чужой черновик.\n\n" +
-    "Сначала определи жанр — заметка, песня, стихи, сценическая реплика, письмо, пост, сырая " +
-    "мысль — и суди по законам этого жанра, а не по «правилам хорошего текста вообще».\n\n" +
-    "Ответь тремя частями:\n\n" +
-    "**Что держит** — конкретные места, на которых текст стоит, с цитатами. Держать нечего — так и " +
-    "скажи, не выдумывай достоинств.\n\n" +
-    "**Что мешает** — слабые места с цитатами и объяснением, чем именно плохо: штамп, невнятный " +
-    "образ, провисший ритм, потерянная мысль, лишний абзац, сбитая логика, интонация не та.\n\n" +
-    "**Что сделать** — 2–4 конкретных шага. Для одной-двух самых слабых фраз покажи, как их можно " +
-    "переписать.\n\n" +
-    "Цитируй, а не пересказывай. Не хвали из вежливости, не смягчай — но и не разноси ради красного " +
-    "словца. Не переписывай текст целиком: твоё дело объяснить, а не подменить собой автора. Не " +
-    "обсуждай того, чего в тексте нет. Никаких общих слов вроде «в целом неплохо, но есть над чем " +
-    "поработать».\n\n" +
-    "Коротко: по нескольку фраз на часть. Отвечай на языке текста.",
+    "Проведи строгий критический анализ этого текста. Оцени его структуру, понятность, логику и " +
+    "стилистику. Укажи на сильные стороны, а затем напиши конкретный нумерованный список " +
+    "рекомендаций: что именно и как нужно исправить, чтобы сделать текст идеальным.",
+  promptKeepMarkup:
+    "Текст взят из заметки, поэтому разметку сохраняй посимвольно: знаки markdown, отступы, " +
+    "переносы строк и пустые строки, ==выделения==, блоки кода вместе с содержимым, ссылки, " +
+    "формулы и #теги. Ни одной буквы не меняй внутри [[двойных квадратных скобок]] — это имена " +
+    "файлов, и правка рвёт связи между заметками; в ссылке вида [[файл|подпись]] правь только " +
+    "подпись. В стихах и песнях никогда не меняй разбивку на строки: строка без точки в конце, " +
+    "тире вместо запятой или строчная буква в начале строки — это авторский приём, а не ошибка.",
   promptOnlyText:
     "В ответе — ТОЛЬКО получившийся текст, ровно в том виде, в каком он должен лежать в заметке: " +
     "без предисловий и послесловий, без пояснений к правкам, без вариантов на выбор, без кавычек " +
@@ -473,18 +346,20 @@ const ru: typeof en = {
   cmdQuick: "Быстрое меню над выделением",
   quickTitle: "Что сделать с текстом",
   quickPlaceholder: "Напиши, что сделать…",
-  quickHint: "1–9 — готовое · Enter — переписать текст · Ctrl+Enter — ответ в чат · ↑ — прошлые промпты",
-  quickHintMac: "1–9 — готовое · Enter — переписать текст · ⌘Enter — ответ в чат · ↑ — прошлые промпты",
+  quickHint: "Цифра — готовое · Enter — переписать текст · Ctrl+Enter — ответ в чат · ↑ — прошлые промпты",
+  quickHintMac: "Цифра — готовое · Enter — переписать текст · ⌘Enter — ответ в чат · ↑ — прошлые промпты",
   quickHead: "Быстрое меню",
   quickDesc:
-    "Alt+1 открывает окно над выделенным текстом: пиши свою инструкцию или жми 1–9 для готового " +
-    "действия. Цифра выбирает действие, только пока поле пустое, — так промпт может начинаться " +
-    "с числа. Клавиша считается физическая, так что раскладка не мешает.\n\n" +
-    "Здесь же действие и правится: выбери его в слоте и жми карандаш — название, иконка, промпт " +
-    "и что делать с ответом. Снятое со слота действие не пропадает: у него остаётся своя команда, " +
-    "а команде можно назначить горячую клавишу.",
+    "Alt+1 открывает окно над выделенным текстом: пиши свою инструкцию или жми цифру для " +
+    "готового действия. Цифра выбирает действие, только пока поле пустое, — так промпт может " +
+    "начинаться с числа. Клавиша считается физическая, так что раскладка не мешает.\n\n" +
+    "Клавиш сразу пять, а если мало — добавь ещё, до девяти. Строку можно перетащить за ручку: " +
+    "так действие переезжает на другую клавишу. Карандаш открывает само действие: название, " +
+    "иконка, промпт и что делать с ответом. Снятое с клавиши действие не пропадает: у него " +
+    "остаётся своя команда, а команде можно назначить горячую клавишу.",
   quickSlot: "Клавиша {key}",
-  quickPrompt: "Промпт действия «{name}»",
+  quickAddKey: "Добавить клавишу",
+  quickDropKey: "Убрать клавишу {key}",
   quickNone: "— пусто —",
   quickAsk: "Спросить о выделенном (в чат)",
   quickNew: "+ Новое действие…",
@@ -506,6 +381,10 @@ const ru: typeof en = {
   chatCleared: "Чат очищен",
   chatUndoClear: "Нажми, чтобы вернуть",
   chatContextClipped: "Заметка длинная — в контекст ушло только её начало.",
+  chatAttachSize: "{chars} зн.",
+  chatAttachDrop: "Не спрашивать про этот фрагмент",
+  chatAttached: "Выделенный фрагмент ({chars} зн.)",
+  chatNoteFragment: "О фрагменте:",
   chatCopied: "Скопировано",
   chatInserted: "Вставлено в заметку",
   chatNoEditor: "Открой заметку, куда вставлять ответ",
@@ -677,8 +556,8 @@ const ru: typeof en = {
   setSystemDesc: "Добавляется к каждому запросу — скажи модели, с кем и как она говорит.",
   setSystemPlaceholder: "Ты помогаешь писать и править заметки в Obsidian.",
   setHotkeysDesc:
-    "Каждое действие — ещё и команда: дай ей хоткей и вызывай мимо меню. У действий, не попавших " +
-    "в эту пятёрку, команда тоже есть.",
+    "Каждое действие — ещё и команда: дай ей хоткей и вызывай мимо меню. У действий, оставшихся " +
+    "без клавиши, команда тоже есть.",
   setHotkeysBtn: "Открыть горячие клавиши",
   setHotkey: "Занять Alt+1 под быстрое меню",
   setHotkeyDesc:

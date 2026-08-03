@@ -17,6 +17,14 @@ export const CONTEXT_BUDGET = 24000;
 export const CONTEXT_MESSAGES = 40;
 
 /**
+ * Реплика так, как её видит модель: вопрос вместе с фрагментом, о котором он
+ * задан. Без фрагмента следующий вопрос («а короче?») повисает в воздухе.
+ */
+export function messageText(m: StoredChatMessage): string {
+  return m.quote ? `[Selected fragment of the note]\n${m.quote}\n\n${m.content}` : m.content;
+}
+
+/**
  * Последние сообщения разговора, влезающие в бюджет. Идём с конца: ближнее к
  * вопросу нужнее давнего. Записи журнала правок пропускаем — модели незачем
  * читать отчёт о своей работе.
@@ -33,8 +41,9 @@ export function contextWindow(
     if (isActionEntry(item)) continue;
     // Первое сообщение берём даже если оно одно длиннее бюджета: разговор без
     // предыдущей реплики понятнее, чем разговор без единой.
-    if (out.length > 0 && (item.content.length > left || out.length >= limit)) break;
-    left -= item.content.length;
+    const size = messageText(item).length;
+    if (out.length > 0 && (size > left || out.length >= limit)) break;
+    left -= size;
     out.push(item);
   }
   return out.reverse();

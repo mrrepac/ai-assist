@@ -2,7 +2,7 @@ import { AiAction, defaultActions } from "./actions";
 import { ProviderKind } from "./api";
 import { DiffSegment } from "./diff";
 import { t } from "./i18n";
-import { isLegacyPrompt, isLegacySlots, isRetired } from "./legacy";
+import { isLegacyName, isLegacyPrompt, isLegacySlots, isRetired } from "./legacy";
 
 /** Что помнится про каждого провайдера отдельно. */
 export interface ProviderProfile {
@@ -59,16 +59,21 @@ export interface AiAssistSettings {
 /** Спецпункт быстрого меню — не действие, а отдельная команда плагина. */
 export const QUICK_ASK = "@ask";
 
-/**
- * Сколько цифр разбирает быстрое меню. Девять, а не пять: слот — единственное
- * место, где действие видно и правится, и всё, что в слоты не поместилось,
- * пропадало из настроек совсем.
- */
-export const QUICK_SLOT_COUNT = 9;
+/** Сколько клавиш в быстром меню сразу: рука помнит первые пять. */
+export const QUICK_SLOTS_DEFAULT = 5;
+
+/** Дальше цифры кончаются — больше девяти клавиш не бывает. */
+export const QUICK_SLOTS_MAX = 9;
 
 export interface StoredChatMessage {
   role: "user" | "assistant";
   content: string;
+  /**
+   * Выделенный кусок заметки, о котором был вопрос. Хранится отдельно от текста
+   * вопроса: так его видно в ленте цитатой и после перезагрузки панели, и в
+   * следующий запрос он уходит вместе с вопросом, а не теряется.
+   */
+  quote?: string;
   reasoning?: string;
   /** Расход на этот ответ: иначе после перезагрузки панели счёт пропадал. */
   usage?: { prompt: number; completion: number; cached: number };
@@ -195,17 +200,7 @@ export function defaultSettings(): AiAssistSettings {
     tools: true,
     toolsConfirm: true,
     actions: defaultActions(),
-    quickSlots: [
-      "spelling",
-      "expand",
-      "clarify",
-      "shorten",
-      "evaluate",
-      "transcript",
-      QUICK_ASK,
-      "",
-      "",
-    ],
+    quickSlots: ["spelling", "expand", "clarify", "shorten", "evaluate"],
     recentPrompts: [],
     freshStart: true,
     defaultHotkey: false,
@@ -250,12 +245,19 @@ export function mergeSettings(raw: unknown): AiAssistSettings {
   const builtins = defaultActions().map((def) => {
     const found = stored.find((a) => a.id === def.id);
     if (!found) return def;
-    // Промпт лежит в data.json, поэтому новые заготовки сами не доезжают.
-    // Заводский промпт (нынешний или из прошлой версии) обновляем, переписанный
-    // под себя — оставляем как есть.
-    const untouched =
-      found.prompt.trim() === def.prompt.trim() || isLegacyPrompt(found.prompt);
-    return { ...def, ...found, prompt: untouched ? def.prompt : found.prompt, builtin: true };
+    // Промпт и название лежат в data.json, поэтому новые заготовки сами не
+    // доезжают. Заводское (нынешнее или из прошлой версии) обновляем,
+    // переписанное под себя — оставляем как есть.
+    const ownPrompt =
+      found.prompt.trim() !== def.prompt.trim() && !isLegacyPrompt(found.prompt);
+    const ownName = found.name.trim() !== def.name.trim() && !isLegacyName(found.name);
+    return {
+      ...def,
+      ...found,
+      name: ownName ? found.name : def.name,
+      prompt: ownPrompt ? found.prompt : def.prompt,
+      builtin: true,
+    };
   });
   const custom = stored
     .filter((a) => !builtins.some((b) => b.id === a.id))
@@ -297,9 +299,15 @@ export function mergeSettings(raw: unknown): AiAssistSettings {
   // иначе обновлённые заготовки увидят только те, кто ставит плагин впервые.
   const storedSlots = Array.isArray(s.quickSlots) ? s.quickSlots : base.quickSlots;
   const slots = isLegacySlots(storedSlots) ? base.quickSlots : storedSlots;
+  // Клавиш ровно столько, сколько пользователь себе завёл: пять по умолчанию,
+  // дальше он добавляет их сам. Пустой хвост отбрасываем — он остаётся от
+  // версии с фиксированным рядом и занимал бы место ни за чем.
+  const filled = slots.reduce((last, id, i) => (typeof id === "string" && id ? i + 1 : last), 0);
+  const size = Math.min(QUICK_SLOTS_MAX, Math.max(QUICK_SLOTS_DEFAULT, filled));
+
   // Пустая строка — осознанно очищенный слот, undefined — настройки из версии,
   // где слотов было меньше: такому слоту уместнее умолчание, а не дырка.
-  const chosen = Array.from({ length: QUICK_SLOT_COUNT }, (_, i) =>
+  const chosen = Array.from({ length: size }, (_, i) =>
     typeof slots[i] === "string" ? slots[i] : null,
   );
   // Но кладём только то, чего в наборе ещё нет: ряд стал длиннее, и без этой

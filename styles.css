@@ -195,9 +195,77 @@
 .ai-assist-chat .ai-foot {
   display: flex;
   align-items: flex-end;
+  /* Плашка выделения встаёт своей строкой над полем ввода и кнопкой. */
+  flex-wrap: wrap;
   gap: var(--size-4-2);
   padding: var(--size-4-2) var(--size-4-3);
   border-top: 1px solid var(--background-modifier-border);
+}
+
+/* Прикреплённый фрагмент заметки: о нём пойдёт вопрос. */
+.ai-assist-chat .ai-attach {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  flex-basis: 100%;
+  min-width: 0;
+  padding: var(--size-2-1) var(--size-2-2);
+  border-radius: var(--radius-s);
+  background-color: var(--background-modifier-hover);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.ai-assist-chat .ai-attach-icon {
+  display: flex;
+  flex-shrink: 0;
+  color: var(--text-accent);
+}
+
+.ai-assist-chat .ai-attach-icon .svg-icon {
+  width: 1em;
+  height: 1em;
+}
+
+.ai-assist-chat .ai-attach-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ai-assist-chat .ai-attach-size {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.ai-assist-chat .ai-attach-drop {
+  flex-shrink: 0;
+  padding: var(--size-2-1);
+}
+
+.ai-assist-chat .ai-attach-drop .svg-icon {
+  width: 0.9em;
+  height: 0.9em;
+}
+
+/* Фрагмент над репликой: разворачивается, если понадобилось перечитать. */
+.ai-assist-chat .ai-msg-quote {
+  margin-bottom: var(--size-2-2);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.ai-assist-chat .ai-msg-quote summary {
+  cursor: pointer;
+}
+
+.ai-assist-chat .ai-msg-quote-body {
+  margin-top: var(--size-2-1);
+  padding-left: var(--size-4-2);
+  border-left: 2px solid var(--background-modifier-border);
+  white-space: pre-wrap;
 }
 
 .ai-assist-chat .ai-input {
@@ -274,8 +342,74 @@
 
 /* ——— список действий и правка действия ——— */
 
+/*
+ * Слот быстрого меню. Слева от разделителя — только номер клавиши, он никуда не
+ * едет; справа всё остальное, начиная с ручки, за которую строку перетаскивают.
+ */
+.ai-slot {
+  position: relative;
+  display: grid;
+  grid-template-columns: 9em 1fr;
+  align-items: center;
+  column-gap: var(--size-4-3);
+}
+
+.ai-slot .setting-item-control {
+  align-self: stretch;
+  /* Ручка остаётся у линии, всё остальное выстраивается по правому краю. */
+  justify-content: flex-end;
+  padding-left: var(--size-4-3);
+  border-left: 1px solid var(--background-modifier-border);
+}
+
+/* Названия действий разной длины — без общей ширины кнопки плясали бы. */
+.ai-slot .setting-item-control select {
+  min-width: 12em;
+}
+
+.ai-slot-grip {
+  display: flex;
+  align-items: center;
+  /* Прижимает к себе левый край правой половины, остальное уходит вправо. */
+  margin-right: auto;
+  color: var(--text-faint);
+  cursor: grab;
+}
+
+.ai-slot-grip .svg-icon {
+  width: 1em;
+  height: 1em;
+}
+
+/* Бледнеет только то, что переезжает: номер клавиши остаётся на месте и в цвете. */
+.ai-slot.is-dragging .setting-item-control {
+  opacity: 0.4;
+}
+
+/* Куда встанет строка, если отпустить здесь. */
+.ai-slot.is-drop-before::before,
+.ai-slot.is-drop-after::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-color: var(--interactive-accent);
+}
+
+.ai-slot.is-drop-before::before {
+  top: 0;
+}
+
+.ai-slot.is-drop-after::after {
+  bottom: 0;
+}
+
 .ai-act-icon {
   display: inline-flex;
+  justify-content: center;
+  width: 1em;
+  flex-shrink: 0;
   vertical-align: -0.15em;
   margin-right: var(--size-2-2);
   color: var(--text-muted);

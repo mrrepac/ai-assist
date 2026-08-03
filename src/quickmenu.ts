@@ -1,9 +1,9 @@
 import { App, Modal, Platform, setIcon } from "obsidian";
 import { t } from "./i18n";
-import { QUICK_SLOT_COUNT } from "./types";
+import { QUICK_SLOTS_MAX } from "./types";
 
-/** Цифры, которыми выбирается пресет, — по одной на слот. */
-export const QUICK_KEYS = Array.from({ length: QUICK_SLOT_COUNT }, (_, i) => String(i + 1));
+/** Цифры, которыми выбирается пресет. Сколько их занято — решают настройки. */
+export const QUICK_KEYS = Array.from({ length: QUICK_SLOTS_MAX }, (_, i) => String(i + 1));
 
 /**
  * Ловим физическую клавишу, а не символ: так меню работает и на русской
@@ -56,11 +56,10 @@ export class QuickMenu extends Modal {
     // Список, а не ряд кнопок: названия у действий разной длины, и в строку они
     // выстраиваются рвано.
     const list = this.contentEl.createDiv({ cls: "ai-quick-list" });
-    QUICK_KEYS.forEach((key, i) => {
-      const preset = this.opts.presets[i];
+    this.opts.presets.forEach((preset, i) => {
       if (!preset) return;
       const row = list.createEl("button", { cls: "ai-quick-item" });
-      row.createEl("kbd", { cls: "ai-quick-key", text: key });
+      row.createEl("kbd", { cls: "ai-quick-key", text: QUICK_KEYS[i] });
       setIcon(row.createSpan({ cls: "ai-quick-icon" }), preset.icon);
       row.createSpan({ cls: "ai-quick-item-label", text: preset.label });
       row.onclick = () => {

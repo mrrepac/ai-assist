@@ -653,12 +653,17 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     );
   }
 
+  /**
+   * Выделенное — в чат. Раньше фрагмент уходил вопросом сам по себе, и модель
+   * отвечала встречным «а что с ним сделать?». Теперь он прикрепляется к полю
+   * ввода: сначала вопрос, фрагмент уедет вместе с ним.
+   */
   private async askAboutSelection(editor: Editor): Promise<void> {
     const sel = this.grabChecked(editor);
     if (!sel) return;
     const chatView = await this.openChat();
+    chatView.takeSelection(sel.text);
     chatView.focusInput();
-    await chatView.submit(sel.text, { display: `> ${sel.text.replace(/\n/g, "\n> ")}` });
   }
 
   // ——————————————————————— индикатор занятости ———————————————————————
@@ -730,6 +735,19 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     const text = view.editor.getValue();
     if (!hasText(text)) return null;
     return { path: view.file.path, ...clip(text) };
+  }
+
+  /**
+   * Выделение в открытой заметке — чтобы спросить о нём в чате. Уходя в панель,
+   * пользователь теряет выделение из виду, но в редакторе оно живо: CodeMirror
+   * держит диапазон, пока в заметке не щёлкнут снова.
+   */
+  selectionContext(): { path: string; text: string } | null {
+    const view = this.centralNote();
+    if (!view?.file) return null;
+    const text = view.editor.getSelection();
+    if (!hasText(text)) return null;
+    return { path: view.file.path, text: clip(text).text };
   }
 
   insertIntoEditor(text: string): boolean {

@@ -1,4 +1,4 @@
-import { App, Notice, PluginSettingTab, Setting, debounce, setIcon } from "obsidian";
+import { App, Notice, Platform, PluginSettingTab, Setting, debounce, setIcon } from "obsidian";
 import { newAction } from "./actions";
 import { ApiError, chat, isLocalUrl, listModels } from "./api";
 import { I18nKey, t } from "./i18n";
@@ -9,6 +9,7 @@ import {
   DEEPSEEK_MODELS,
   PROVIDER_ORDER,
   QUICK_ASK,
+  QUICK_SLOTS_MAX,
   providerLabel,
   providerOf,
   streamAvailable,
@@ -31,6 +32,11 @@ const MODEL_HINT: Record<string, I18nKey> = {
 };
 
 export class AiAssistSettingTab extends PluginSettingTab {
+  /** Какой слот сейчас тянут; null — не тянут ничего. */
+  private dragFrom: number | null = null;
+  /** Контейнер списка клавиш: перерисовывается сам, без остального экрана. */
+  private slotsEl: HTMLElement | null = null;
+
   constructor(app: App, private plugin: AiAssistPlugin) {
     super(app, plugin);
   }
@@ -56,12 +62,12 @@ export class AiAssistSettingTab extends PluginSettingTab {
     const created = newAction();
     s.actions.push(created);
     s.quickSlots[slot] = created.id;
-    await this.saveAndRedraw();
+    await this.saveSlots();
     // Пустое действие бесполезно, поэтому сразу открываем его на правку.
     new ActionModal(this.app, created, (edited) => {
       const at = s.actions.findIndex((a) => a.id === created.id);
       if (at !== -1) s.actions[at] = edited;
-      void this.saveAndRedraw();
+      void this.saveSlots();
     }).open();
   }
 
@@ -77,88 +83,10 @@ export class AiAssistSettingTab extends PluginSettingTab {
       containerEl.createEl("p", { cls: "setting-item-description", text: para });
     }
 
-    const options: Record<string, string> = { "": t("quickNone") };
-    for (const a of s.actions) options[a.id] = a.name;
-    options[QUICK_ASK] = t("quickAsk");
-    options[QUICK_NEW] = t("quickNew");
-
-    QUICK_KEYS.forEach((key, i) => {
-      const id = s.quickSlots[i] ?? "";
-      const action = s.actions.find((a) => a.id === id);
-
-      const row = new Setting(containerEl)
-        .setName(t("quickSlot", { key }))
-        .addDropdown((c) =>
-          c
-            .addOptions(options)
-            .setValue(id)
-            .onChange((v) => {
-              if (v === QUICK_NEW) {
-                void this.addAction(i);
-                return;
-              }
-              s.quickSlots[i] = v;
-              // Перерисовываем весь экран: под слотом меняется промпт, а
-              // список действий — заодно и подписи в остальных слотах.
-              void this.saveAndRedraw();
-            }),
-        );
-
-      if (!action) return;
-
-      // Иконку показываем живьём: по названию из lucide не угадать, что выйдет.
-      const icon = createSpan({ cls: "ai-act-icon" });
-      setIcon(icon, action.icon);
-      row.controlEl.prepend(icon);
-
-      row.addExtraButton((b) =>
-        b
-          .setIcon("pencil")
-          .setTooltip(t("actEdit"))
-          .onClick(() =>
-            new ActionModal(this.app, action, (edited) => {
-              const at = s.actions.findIndex((a) => a.id === action.id);
-              if (at !== -1) s.actions[at] = edited;
-              void this.saveAndRedraw();
-            }).open(),
-          ),
-      );
-      // Встроенное действие удалить нельзя — иначе новая версия плагина вернёт
-      // его обратно, и получится, что удаление не работает.
-      if (!action.builtin) {
-        row.addExtraButton((b) =>
-          b
-            .setIcon("trash-2")
-            .setTooltip(t("actDelete"))
-            .onClick(() =>
-              new ConfirmModal(
-                this.app,
-                t("actDelete"),
-                t("actDeleteConfirm", { name: action.name }),
-                t("actDelete"),
-                () => {
-                  s.actions = s.actions.filter((a) => a.id !== action.id);
-                  s.quickSlots = s.quickSlots.map((slot) => (slot === action.id ? "" : slot));
-                  void this.saveAndRedraw();
-                },
-              ).open(),
-            ),
-        );
-      }
-
-      // Промпт правится прямо здесь: ради одной фразы не хочется открывать окно.
-      new Setting(containerEl)
-        .setDesc(t("quickPrompt", { name: action.name }))
-        .setClass("ai-setting-stacked")
-        .setClass("ai-quick-prompt")
-        .addTextArea((c) => {
-          c.setValue(action.prompt).onChange((v) => {
-            action.prompt = v;
-            this.saveLater();
-          });
-          c.inputEl.rows = 4;
-        });
-    });
+    // Список живёт в своём контейнере: перекладывая клавиши, экран целиком не
+    // перерисовываем — иначе настройки отпрыгивают к началу на каждое движение.
+    this.slotsEl = containerEl.createDiv({ cls: "ai-slots" });
+    this.renderSlots();
 
     new Setting(containerEl)
       .setName(t("setHotkey"))
@@ -178,6 +106,183 @@ export class AiAssistSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setDesc(t("setHotkeysDesc"))
       .addButton((b) => b.setButtonText(t("setHotkeysBtn")).onClick(() => this.openHotkeys()));
+  }
+
+  /** Записать и перерисовать один список клавиш — экран остаётся на месте. */
+  private async saveSlots(): Promise<void> {
+    await this.save();
+    this.renderSlots();
+  }
+
+  /**
+   * Клавиши быстрого меню. Номер слева закреплён за строкой и никуда не едет —
+   * переезжает то, что на него назначено.
+   */
+  private renderSlots(): void {
+    const list = this.slotsEl;
+    if (!list) return;
+    const s = this.plugin.settings;
+    list.empty();
+
+    const options: Record<string, string> = { "": t("quickNone") };
+    for (const a of s.actions) options[a.id] = a.name;
+    options[QUICK_ASK] = t("quickAsk");
+    options[QUICK_NEW] = t("quickNew");
+
+    s.quickSlots.forEach((id, i) => {
+      const action = s.actions.find((a) => a.id === id);
+
+      const row = new Setting(list)
+        .setName(t("quickSlot", { key: QUICK_KEYS[i] }))
+        .addDropdown((c) =>
+          c
+            .addOptions(options)
+            .setValue(id)
+            .onChange((v) => {
+              if (v === QUICK_NEW) {
+                void this.addAction(i);
+                return;
+              }
+              s.quickSlots[i] = v;
+              void this.saveSlots();
+            }),
+        );
+      row.settingEl.addClass("ai-slot");
+
+      // Иконку показываем живьём: по названию из lucide не угадать, что выйдет.
+      // На пустой клавише место под неё остаётся — иначе её список съезжает
+      // влево, и ровный столбик рассыпается.
+      const icon = createSpan({ cls: "ai-act-icon" });
+      if (action) setIcon(icon, action.icon);
+      row.controlEl.prepend(icon);
+
+      // Ручка — уже за разделителем, первой в правой половине строки: слева от
+      // линии живёт только номер клавиши, он с места не двигается.
+      this.makeDraggable(row.settingEl, row.controlEl, i);
+
+      // Карандаш есть на каждой клавише: на занятой открывает действие, на
+      // пустой заводит новое — ряд кнопок ровный, и пустая клавиша не тупик.
+      row.addExtraButton((b) =>
+        b
+          .setIcon("pencil")
+          .setTooltip(action ? t("actEdit") : t("quickNew"))
+          .onClick(() => {
+            if (!action) {
+              void this.addAction(i);
+              return;
+            }
+            new ActionModal(this.app, action, (edited) => {
+              const at = s.actions.findIndex((a) => a.id === action.id);
+              if (at !== -1) s.actions[at] = edited;
+              void this.saveSlots();
+            }).open();
+          }),
+      );
+
+      // Встроенное действие удалить нельзя — иначе новая версия плагина вернёт
+      // его обратно, и получится, что удаление не работает.
+      if (action && !action.builtin) {
+        row.addExtraButton((b) =>
+          b
+            .setIcon("trash-2")
+            .setTooltip(t("actDelete"))
+            .onClick(() =>
+              new ConfirmModal(
+                this.app,
+                t("actDelete"),
+                t("actDeleteConfirm", { name: action.name }),
+                t("actDelete"),
+                () => {
+                  s.actions = s.actions.filter((a) => a.id !== action.id);
+                  s.quickSlots = s.quickSlots.map((slot) => (slot === action.id ? "" : slot));
+                  void this.saveSlots();
+                },
+              ).open(),
+            ),
+        );
+      }
+    });
+
+    // Пять клавиш хватает почти всегда, поэтому лишние заводятся руками.
+    const foot = new Setting(list).setClass("ai-slots-foot");
+    if (s.quickSlots.length < QUICK_SLOTS_MAX) {
+      foot.addButton((b) =>
+        b.setButtonText(t("quickAddKey")).onClick(() => {
+          s.quickSlots.push("");
+          void this.saveSlots();
+        }),
+      );
+    }
+    if (s.quickSlots.length > 1) {
+      foot.addExtraButton((b) =>
+        b
+          .setIcon("minus")
+          .setTooltip(t("quickDropKey", { key: QUICK_KEYS[s.quickSlots.length - 1] }))
+          .onClick(() => {
+            // Действие с последней клавиши не пропадает — у него остаётся команда.
+            s.quickSlots.pop();
+            void this.saveSlots();
+          }),
+      );
+    }
+  }
+
+  /**
+   * Перетаскивание слота. Раскладка — вещь про руку, а не про список: клавиши
+   * удобнее расставлять, двигая строки, чем переназначая каждый выпадающий
+   * список по очереди. Строка едет со сдвигом остальных, как в обычном списке.
+   */
+  private makeDraggable(el: HTMLElement, gripHost: HTMLElement, index: number): void {
+    // На телефоне перетаскивания нет — HTML5 drag&drop не работает от касаний, и
+    // ручка обещала бы то, чего не будет. Там слоты меняются выпадающим списком.
+    if (Platform.isMobile) return;
+
+    el.draggable = true;
+
+    // Ручка ничего не делает сама — она говорит, что строку можно тянуть.
+    const grip = createSpan({ cls: "ai-slot-grip" });
+    setIcon(grip, "grip-vertical");
+    gripHost.prepend(grip);
+
+    el.addEventListener("dragstart", (e) => {
+      this.dragFrom = index;
+      el.addClass("is-dragging");
+      // Без данных в dataTransfer Firefox не начинает перетаскивание вовсе.
+      e.dataTransfer?.setData("text/plain", String(index));
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+      // За курсором едет только правая половина строки: номер клавиши закреплён
+      // за местом, а переезжает то, что на него назначено.
+      e.dataTransfer?.setDragImage(gripHost, 0, gripHost.clientHeight / 2);
+    });
+    el.addEventListener("dragend", () => {
+      el.removeClass("is-dragging");
+      this.clearDropMarks();
+      this.dragFrom = null;
+    });
+    el.addEventListener("dragover", (e) => {
+      if (this.dragFrom === null || this.dragFrom === index) return;
+      e.preventDefault();
+      this.clearDropMarks();
+      // Линия с той стороны, с которой строка встанет: сверху, если тянут
+      // снизу вверх, и снизу, если наоборот.
+      el.addClass(this.dragFrom < index ? "is-drop-after" : "is-drop-before");
+    });
+    el.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const from = this.dragFrom;
+      this.clearDropMarks();
+      if (from === null || from === index) return;
+      const slots = this.plugin.settings.quickSlots;
+      const [moved] = slots.splice(from, 1);
+      slots.splice(index, 0, moved);
+      void this.saveSlots();
+    });
+  }
+
+  private clearDropMarks(): void {
+    this.containerEl.findAll(".ai-slot").forEach((el) => {
+      el.removeClasses(["is-drop-before", "is-drop-after"]);
+    });
   }
 
   /** Любая правка полей заодно обновляет профиль текущего провайдера. */

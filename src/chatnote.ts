@@ -26,11 +26,16 @@ export function chatToMarkdown(history: HistoryItem[], model: string, when: stri
   for (const item of history) {
     if (isActionEntry(item)) continue;
     if (!item.content.trim()) continue;
-    parts.push(
-      item.role === "user"
-        ? `**${t("chatYou")}**\n\n${quote(item.content)}`
-        : `**${t("chatModel")}**\n\n${item.content}`,
-    );
+    if (item.role !== "user") {
+      parts.push(`**${t("chatModel")}**\n\n${item.content}`);
+      continue;
+    }
+    // Фрагмент, о котором был вопрос, идёт над ним: без него сохранённый
+    // разговор начинается с «а покороче?» и ничего не значит.
+    const asked = item.quote
+      ? `*${t("chatNoteFragment")}*\n\n${quote(item.quote)}\n\n${quote(item.content)}`
+      : quote(item.content);
+    parts.push(`**${t("chatYou")}**\n\n${asked}`);
   }
   if (parts.length === 0) return "";
   return `*${t("chatNoteHead", { model, when })}*\n\n${parts.join("\n\n---\n\n")}\n`;

@@ -10,7 +10,7 @@ import {
 } from "obsidian";
 import { ApiConfig, ApiError, ChatMessage, Usage, chat, listModels } from "./api";
 import { DiffResult, diffWords } from "./diff";
-import { contextWindow } from "./history";
+import { contextWindow, messageText } from "./history";
 import { t } from "./i18n";
 import { ModelSuggestModal } from "./modals";
 import { ParsedCall, ToolHost, parseCall, runCall, toolSpecs } from "./tools";
@@ -53,6 +53,8 @@ export interface ChatHost extends ToolHost {
   stopAction(): void;
   /** Текст активной заметки, если контекст включён; clipped — отдано началом. */
   noteContext(): { path: string; text: string; clipped: boolean } | null;
+  /** Что выделено в открытой заметке прямо сейчас. */
+  selectionContext(): { path: string; text: string } | null;
   /** Вставить текст в открытую заметку; false — вставлять некуда. */
   insertIntoEditor(text: string): boolean;
 }
@@ -64,6 +66,8 @@ export interface SubmitOptions {
   system?: string;
   /** Не тащить в запрос предыдущие сообщения: действие само по себе. */
   fresh?: boolean;
+  /** Фрагмент заметки, о котором вопрос. По умолчанию — прикреплённое выделение. */
+  quote?: string;
 }
 
 export class ChatView extends ItemView {
@@ -71,9 +75,14 @@ export class ChatView extends ItemView {
   private inputEl!: HTMLTextAreaElement;
   private sendBtn!: HTMLButtonElement;
   private downEl!: HTMLButtonElement;
+  private attachEl!: HTMLElement;
   private controller: AbortController | null = null;
   /** Карточки журнала по id записи — чтобы обновлять их на ходу, а не рисовать заново. */
   private actionEls = new Map<string, HTMLElement>();
+  /** Выделение, о котором пойдёт вопрос. Показано плашкой над полем ввода. */
+  private attached: { path: string; text: string } | null = null;
+  /** Снятый крестиком фрагмент: пока выделение то же, обратно не подхватываем. */
+  private dismissed: string | null = null;
 
   constructor(leaf: WorkspaceLeaf, private host: ChatHost) {
     super(leaf);
@@ -151,6 +160,17 @@ export class ChatView extends ItemView {
     });
 
     const foot = root.createDiv({ cls: "ai-foot" });
+    // Плашка выделения живёт над полем ввода: вопрос задают здесь, и здесь же
+    // должно быть видно, о чём он.
+    this.attachEl = foot.createDiv({ cls: "ai-attach" });
+    this.attachEl.hide();
+
+    // Выделили в заметке и пришли сюда — момент перехода и есть смена активного
+    // листа. Плюс фокус: в панель попадают и не меняя лист.
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.catchSelection()));
+    this.registerDomEvent(root, "focusin", () => this.catchSelection());
+    this.catchSelection();
+
     this.inputEl = foot.createEl("textarea", {
       cls: "ai-input",
       attr: { rows: "2", placeholder: t("chatPlaceholder") },
@@ -303,6 +323,59 @@ export class ChatView extends ItemView {
     this.inputEl?.focus();
   }
 
+  /**
+   * Подхватывает выделение из заметки. Само по себе оно ни к чему не обязывает:
+   * плашку видно, вопрос уйдёт вместе с фрагментом, а крестик её убирает.
+   */
+  private catchSelection(): void {
+    const found = this.host.selectionContext();
+    // Тот же кусок, что уже на плашке или что сняли крестиком, — не трогаем:
+    // событий тут много, а перерисовка на каждое давала бы мельтешение.
+    if (found && (found.text === this.attached?.text || found.text === this.dismissed)) return;
+    if (!found && this.attached === null) return;
+    // Выделение снялось (щёлкнули в заметке) — но если пользователь уже начал
+    // печатать вопрос, отнимать у него фрагмент нельзя.
+    if (!found && this.inputEl?.value.trim()) return;
+    this.dismissed = null;
+    this.attach(found);
+  }
+
+  /** Взять выделение в чат по команде — даже если плашку до этого снимали. */
+  takeSelection(text?: string): void {
+    this.dismissed = null;
+    const path = this.host.targetPath() ?? "";
+    this.attach(text ? { path, text } : this.host.selectionContext());
+  }
+
+  private attach(found: { path: string; text: string } | null): void {
+    this.attached = found;
+    this.attachEl.empty();
+    if (!found) {
+      this.attachEl.hide();
+      return;
+    }
+    this.attachEl.show();
+
+    setIcon(this.attachEl.createSpan({ cls: "ai-attach-icon" }), "text-quote");
+    const preview = found.text.replace(/\s+/g, " ").trim();
+    this.attachEl.createSpan({
+      cls: "ai-attach-text",
+      text: preview.length > 120 ? preview.slice(0, 119) + "…" : preview,
+    });
+    this.attachEl.createSpan({
+      cls: "ai-attach-size",
+      text: t("chatAttachSize", { chars: found.text.length }),
+    });
+
+    const drop = this.attachEl.createEl("button", { cls: "ai-attach-drop clickable-icon" });
+    setIcon(drop, "x");
+    drop.setAttr("aria-label", t("chatAttachDrop"));
+    drop.onclick = () => {
+      this.dismissed = found.text;
+      this.attach(null);
+    };
+  }
+
   private autoGrow(): void {
     // Сначала отпускаем высоту, иначе scrollHeight покажет прежнюю, а не нужную.
     this.inputEl.setCssStyles({ height: "auto" });
@@ -331,8 +404,17 @@ export class ChatView extends ItemView {
     // С какого места история принадлежит этому заходу: по нему кнопка «Ещё раз»
     // отматывает всё сказанное, включая круги инструментов.
     const startAt = this.host.history.length;
-    this.host.history.push({ role: "user", content: opts.display ?? text });
-    const userEl = this.addMessage("user", opts.display ?? text);
+    // Прикреплённое выделение уходит с вопросом и тут же снимается: следующий
+    // вопрос — уже про своё, если не выделить заново.
+    const quote = opts.quote ?? this.attached?.text;
+    this.attach(null);
+    // Про этот кусок уже спросили, и он остался в ленте. Выделение в заметке
+    // никуда не делось — без этого плашка тут же вернулась бы, и фрагмент уехал
+    // бы вторым разом за те же деньги.
+    if (quote) this.dismissed = quote;
+
+    this.host.history.push({ role: "user", content: opts.display ?? text, quote });
+    const userEl = this.addMessage("user", opts.display ?? text, quote);
     userEl.scrollIntoView({ block: "end" });
 
     const messages: ChatMessage[] = [];
@@ -363,10 +445,10 @@ export class ChatView extends ItemView {
     if (!opts.fresh) {
       // История без последней реплики — её кладём отдельно, уже настоящим текстом.
       for (const m of contextWindow(this.host.history.slice(0, -1))) {
-        messages.push({ role: m.role, content: m.content });
+        messages.push({ role: m.role, content: messageText(m) });
       }
     }
-    messages.push({ role: "user", content: text });
+    messages.push({ role: "user", content: messageText({ role: "user", content: text, quote }) });
 
     // Локальная ссылка: stop() обнуляет this.controller, а в catch ещё нужно
     // знать, оборвали запрос или он упал сам.
@@ -631,7 +713,7 @@ export class ChatView extends ItemView {
         this.renderAction(m);
         continue;
       }
-      const el = this.addMessage(m.role, "");
+      const el = this.addMessage(m.role, "", m.quote);
       const body = el.querySelector(".ai-msg-body") as HTMLElement;
       if (m.role === "assistant") {
         if (m.reasoning) {
@@ -732,10 +814,17 @@ export class ChatView extends ItemView {
     }
   }
 
-  private addMessage(role: "user" | "assistant", text: string): HTMLElement {
+  private addMessage(role: "user" | "assistant", text: string, quote?: string): HTMLElement {
     this.listEl.querySelector(".ai-empty")?.remove();
     const el = this.listEl.createDiv({ cls: `ai-msg ai-msg-${role}` });
     el.createDiv({ cls: "ai-msg-role", text: role === "user" ? t("chatYou") : t("chatModel") });
+    // Фрагмент, о котором спрашивали, — сворачиваемой цитатой: он бывает длиннее
+    // самого вопроса, и разворачивают его редко.
+    if (quote) {
+      const details = el.createEl("details", { cls: "ai-msg-quote" });
+      details.createEl("summary", { text: t("chatAttached", { chars: quote.length }) });
+      details.createDiv({ cls: "ai-msg-quote-body", text: quote });
+    }
     const body = el.createDiv({ cls: "ai-msg-body" });
     if (text) body.setText(text);
     return el;

@@ -39,7 +39,7 @@ async function load(entry, name) {
 
 const { drainSse, endpoint, collectToolCalls, isLocalUrl } = await load("src/api.ts", "api");
 const { cleanReply, offsetAt } = await load("src/actions.ts", "actions");
-const { contextWindow } = await load("src/history.ts", "history");
+const { contextWindow, messageText } = await load("src/history.ts", "history");
 const { mergeSettings, providerOf, streamAvailable, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank } = await load("src/types.ts", "types");
 const { chatToMarkdown } = await load("src/chatnote.ts", "chatnote");
 const { parseCall, runCall } = await load("src/tools.ts", "tools");
@@ -104,7 +104,7 @@ check("пробелы по обоим краям", cleanReply("текст", " о
 check(
   "пустые данные дают встроенные действия",
   mergeSettings(null).actions.map((a) => a.id),
-  ["spelling", "clarify", "expand", "shorten", "evaluate", "transcript"],
+  ["spelling", "clarify", "expand", "shorten", "evaluate"],
 );
 check("температура за пределами чинится", mergeSettings({ temperature: 9 }).temperature, 2);
 check("температура строкой читается", mergeSettings({ temperature: "0.7" }).temperature, 0.7);
@@ -123,6 +123,21 @@ const legacySpelling =
   "Не меняй стиль, порядок слов, лексику и разметку Markdown. " +
   "Сохраняй авторский голос, сленг и намеренные отступления от нормы. " +
   "Если исправлять нечего — верни текст без изменений.";
+// Чистка расшифровки дожила до 0.2.0 и убрана после неё — её заводский промпт
+// нужен тут, чтобы проверить, что сохранённая копия вычищается при загрузке.
+const legacyTranscript =
+  "Текст — автоматическая расшифровка устной речи. Сделай её читаемой, не превращая в пересказ.\n\n" +
+  "Убери: пустые слова-паразиты (ну, вот, как бы, типа, значит, короче, это самое), звуки-заминки, " +
+  "повтор слова подряд, оговорки вместе с самоисправлением — оставляй итоговый вариант, " +
+  "фразы, брошенные на полуслове.\n\n" +
+  "Расставь: пунктуацию, заглавные буквы, абзацы по смысловым кускам. Перечисление, которое в " +
+  "речи звучит списком, оформи списком. Диалог и цитаты — тире или кавычками.\n\n" +
+  "Сохрани: все мысли и их порядок, авторские выражения, образы и шутки, живую разговорную " +
+  "интонацию. Оборот вроде «и тут до меня дошло» — это голос автора, а не мусор.\n\n" +
+  "Исправляй явные ошибки распознавания, когда верное слово очевидно из контекста: омофоны, " +
+  "имена, термины, числа. Не очевидно — оставь как есть, выдумывать нельзя.\n\n" +
+  "Запрещено: сокращать содержание, обобщать, дописывать своё, переводить в книжный стиль или " +
+  "канцелярит. Ни одна мысль не должна пропасть, ни одной новой — появиться.";
 const fresh = mergeSettings(null).actions.find((a) => a.id === "spelling").prompt;
 check(
   "заводский промпт прошлой версии обновляется",
@@ -136,14 +151,41 @@ check(
     .actions.find((a) => a.id === "spelling").prompt,
   legacySpelling + "\nИ ещё не трогай мат.",
 );
-check("новые промпты не пустые", fresh.length > 500, true);
+check("новые промпты не пустые", fresh.length > 120, true);
+// Название заготовки лежит в data.json так же, как промпт, и так же не доезжает
+// само: прежнее меняем на нынешнее, своё не трогаем.
+check(
+  "прежнее название заготовки обновляется",
+  mergeSettings({ actions: [{ id: "clarify", name: "Сделать понятнее", prompt: "п", mode: "replace", icon: "x" }] })
+    .actions.find((a) => a.id === "clarify").name,
+  "Improve the text",
+);
+check(
+  "своё название заготовки остаётся",
+  mergeSettings({ actions: [{ id: "clarify", name: "Причесать", prompt: "п", mode: "replace", icon: "x" }] })
+    .actions.find((a) => a.id === "clarify").name,
+  "Причесать",
+);
 // Заглушка obsidian в тестах отдаёт локаль en, поэтому и заготовки английские.
-check("новый промпт бережёт вики-ссылки", fresh.includes("[[double square brackets]]"), true);
-check("новый промпт бережёт разбивку на строки", fresh.includes("broken into lines"), true);
+check("промпт орфографии запрещает переписывать", fresh.includes("Rewrite nothing"), true);
 check(
   "удалённое встроенное действие возвращается",
   mergeSettings({ actions: [] }).actions.length,
-  6,
+  5,
+);
+// Чистку расшифровки убрали: заводская копия вычищается, переписанная остаётся.
+check(
+  "заводская расшифровка вычищается",
+  mergeSettings({ actions: [{ id: "transcript", name: "Почистить расшифровку", prompt: legacyTranscript, mode: "replace", icon: "mic" }] })
+    .actions.map((a) => a.id)
+    .includes("transcript"),
+  false,
+);
+check(
+  "переписанная под себя расшифровка остаётся",
+  mergeSettings({ actions: [{ id: "transcript", name: "Моя чистка", prompt: "убери мусор", mode: "replace", icon: "mic" }] })
+    .actions.find((a) => a.id === "transcript").builtin,
+  false,
 );
 check(
   "новые заготовки доезжают до старой установки",
@@ -156,7 +198,7 @@ check(
   "пользовательское действие сохраняется",
   mergeSettings({ actions: [{ id: "custom-1", name: "Моё", prompt: "п", mode: "chat", icon: "x" }] })
     .actions.map((a) => a.id),
-  ["spelling", "clarify", "expand", "shorten", "evaluate", "transcript", "custom-1"],
+  ["spelling", "clarify", "expand", "shorten", "evaluate", "custom-1"],
 );
 
 // Перевод убрали из заготовок совсем. Доставшееся от плагина действие вычищаем,
@@ -320,6 +362,18 @@ check(
 );
 check("пустая лента — пустой контекст", contextWindow([]).length, 0);
 
+// ——— выделенный фрагмент при вопросе ———
+// Вопрос «а покороче?» без фрагмента, о котором он задан, ничего не значит —
+// значит фрагмент обязан уходить и в этот запрос, и во все следующие.
+check("фрагмент уходит вместе с вопросом", messageText({ role: "user", content: "а покороче?", quote: "длинный кусок" }).includes("длинный кусок"), true);
+check("вопрос без фрагмента не обрастает служебным", messageText({ role: "user", content: "привет" }), "привет");
+check("сам вопрос никуда не девается", messageText({ role: "user", content: "а покороче?", quote: "кусок" }).endsWith("а покороче?"), true);
+check(
+  "фрагмент считается в бюджет контекста",
+  contextWindow([{ role: "user", content: "х", quote: "я".repeat(300) }, { role: "user", content: "второй" }], 100).length,
+  1,
+);
+
 // ——— координаты правки в закрытой заметке ———
 // Редактора нет, а вернуть текст надо ровно на то место, где он был.
 const LINES = "первая\nвторая\nтретья";
@@ -331,19 +385,27 @@ check("строки за концом текста нет", offsetAt(LINES, 9, 0
 check("колонки за концом строки нет", offsetAt(LINES, 0, 99), null);
 
 // ——— слоты быстрого меню ———
-const FRESH_SLOTS = [
-  "spelling",
-  "expand",
-  "clarify",
-  "shorten",
-  "evaluate",
-  "transcript",
-  "@ask",
-  "",
-  "",
-];
-check("слотов всегда девять", mergeSettings({ quickSlots: ["spelling"] }).quickSlots.length, 9);
+const FRESH_SLOTS = ["spelling", "expand", "clarify", "shorten", "evaluate"];
+check("клавиш по умолчанию пять", mergeSettings({ quickSlots: ["spelling"] }).quickSlots.length, 5);
 check("слоты по умолчанию", mergeSettings(null).quickSlots, FRESH_SLOTS);
+// Клавиши сверх пяти заводятся руками, и их число должно пережить загрузку.
+check(
+  "добавленные клавиши остаются",
+  mergeSettings({ quickSlots: ["spelling", "expand", "clarify", "shorten", "evaluate", "@ask", "spelling"] })
+    .quickSlots.length,
+  7,
+);
+check(
+  "пустой хвост от прежнего ряда отбрасывается",
+  mergeSettings({ quickSlots: ["spelling", "expand", "clarify", "shorten", "evaluate", "@ask", "", "", ""] })
+    .quickSlots.length,
+  6,
+);
+check(
+  "больше девяти клавиш не бывает",
+  mergeSettings({ quickSlots: Array.from({ length: 12 }, () => "spelling") }).quickSlots.length,
+  9,
+);
 check(
   "набор из прошлой версии заменяется новым",
   mergeSettings({ quickSlots: ["spelling", "translate", "evaluate", "transcript", "@ask"] }).quickSlots,
@@ -372,23 +434,18 @@ check(
   FRESH_SLOTS,
 );
 check(
-  "набор 0.1.x заменяется новым",
-  mergeSettings({ quickSlots: ["spelling", "expand", "clarify", "shorten", "evaluate"] }).quickSlots,
-  FRESH_SLOTS,
+  "переложенный вручную набор не трогают",
+  mergeSettings({ quickSlots: ["evaluate", "spelling", "@ask", "", ""] }).quickSlots,
+  ["evaluate", "spelling", "@ask", "", ""],
 );
-// Ряд стал длиннее: разложенное вручную остаётся на своих клавишах, а новые
-// слоты добираются умолчаниями — теми, что в набор ещё не попали.
+// Настройки из версии, где клавиш было меньше пяти: недостающие добираются
+// умолчаниями, но только теми, что в набор ещё не попали.
 check(
-  "переложенный вручную набор не переставляют",
-  mergeSettings({ quickSlots: ["transcript", "spelling", "@ask", "", ""] }).quickSlots,
-  ["transcript", "spelling", "@ask", "", "", "expand", "clarify", "shorten", "evaluate"],
-);
-check(
-  "при удлинении ряда действие не задваивается",
-  mergeSettings({ quickSlots: ["transcript", "spelling", "@ask", "", ""] })
-    .quickSlots.filter((id) => id === "spelling").length,
+  "короткий ряд достраивается без повторов",
+  mergeSettings({ quickSlots: ["spelling", "@ask"] }).quickSlots.filter((id) => id === "spelling").length,
   1,
 );
+check("короткий ряд дорастает до пяти", mergeSettings({ quickSlots: ["spelling", "@ask"] }).quickSlots.length, 5);
 check(
   "осознанно пустой слот остаётся пустым",
   mergeSettings({ quickSlots: ["spelling", "", "", "", ""] }).quickSlots[1],
@@ -534,7 +591,7 @@ check(
   }).quickSlots[0],
   "custom-9",
 );
-check("мусор вместо массива → умолчания", mergeSettings({ quickSlots: "ой" }).quickSlots.length, 9);
+check("мусор вместо массива → умолчания", mergeSettings({ quickSlots: "ой" }).quickSlots.length, 5);
 
 // ——— свои промпты ———
 check("промпты по умолчанию пусты", mergeSettings(null).recentPrompts, []);
@@ -622,6 +679,12 @@ check("пустая строка внутри цитаты не ломает р�
 check("сохранять нечего — пустая строка", chatToMarkdown([], "м", "д"), "");
 check("один журнал без разговора — сохранять нечего", chatToMarkdown([talk[0]], "м", "д"), "");
 check("пустые реплики пропускаются", chatToMarkdown([{ role: "user", content: "   " }], "м", "д"), "");
+// Сохранённый разговор без фрагмента начинался бы с «а покороче?» и не значил бы
+// ничего — фрагмент должен идти над вопросом.
+const withQuote = chatToMarkdown([{ role: "user", content: "а покороче?", quote: "исходный кусок" }], "м", "д");
+check("фрагмент попадает в сохранённую заметку", withQuote.includes("> исходный кусок"), true);
+// Тесты идут на английской локали — заглушка moment отдаёт "en".
+check("вопрос о фрагменте подписан", withQuote.includes("About the fragment:"), true);
 
 console.log(`\n${pass} прошло, ${fail} упало`);
 process.exit(fail ? 1 : 0);

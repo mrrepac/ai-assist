@@ -63,14 +63,6 @@ export function defaultActions(): AiAction[] {
       icon: "clipboard-check",
       builtin: true,
     },
-    {
-      id: "transcript",
-      name: t("actTranscript"),
-      prompt: t("actTranscriptPrompt"),
-      mode: "replace",
-      icon: "mic",
-      builtin: true,
-    },
   ];
 }
 
@@ -90,11 +82,15 @@ export function factoryPrompt(id: string): string | null {
   return defaultActions().find((a) => a.id === id)?.prompt ?? null;
 }
 
-/** Инструкция-хвост для правящих действий: без неё модель любит поболтать. */
+/**
+ * Хвост для правящих действий: без него модель любит поболтать, а заодно
+ * причесать разметку. Оговорки про markdown и стихи живут здесь, а не в каждом
+ * промпте: в заметках всё это одинаково — и в заводском действии, и в своём.
+ */
 export function systemFor(action: AiAction, targetLang: string): string {
   const prompt = action.prompt.replace(/\{lang\}/g, targetLang);
   if (action.mode === "chat") return prompt;
-  return prompt + "\n\n" + t("promptOnlyText");
+  return [prompt, t("promptKeepMarkup"), t("promptOnlyText")].join("\n\n");
 }
 
 const FENCE = /^```[^\n]*\n([\s\S]*?)\n?```$/;
