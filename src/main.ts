@@ -180,9 +180,13 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
 
   // ——————————————————————— хранилище ———————————————————————
 
-  /** Где лежит лента. Отдельно от настроек — она меняется на каждое слово. */
-  private historyPath(): string {
-    return `${this.manifest.dir ?? ""}/history.json`;
+  /**
+   * Где лежит лента. Отдельно от настроек — она меняется на каждое слово.
+   * null — своей папки у плагина нет: класть ленту в корень хранилища, к
+   * заметкам, нельзя, а пустой путь делал ровно это.
+   */
+  private historyPath(): string | null {
+    return this.manifest.dir ? `${this.manifest.dir}/history.json` : null;
   }
 
   /**
@@ -191,6 +195,8 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
    */
   private async loadHistory(stored: HistoryItem[] | undefined): Promise<HistoryItem[]> {
     const path = this.historyPath();
+    // Писать некуда — переносить тоже некуда: остаётся то, что лежит в настройках.
+    if (!path) return Array.isArray(stored) ? stored.slice(-HISTORY_LIMIT) : [];
     try {
       if (await this.app.vault.adapter.exists(path)) {
         const raw = JSON.parse(await this.app.vault.adapter.read(path)) as unknown;
@@ -208,8 +214,10 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   }
 
   private async writeHistory(history: HistoryItem[]): Promise<void> {
+    const path = this.historyPath();
+    if (!path) return;
     try {
-      await this.app.vault.adapter.write(this.historyPath(), JSON.stringify(history));
+      await this.app.vault.adapter.write(path, JSON.stringify(history));
     } catch (e) {
       console.error("ai-assist: не удалось записать историю", e);
     }
@@ -552,10 +560,12 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     const record = this.undoable.get(id);
     if (!record) return false;
 
+    // Проверяем тип, а не приводим к нему: в неактивной вкладке лист держит
+    // вместо вьюхи заглушку, и у неё нет ни file, ни editor.
     const view = this.app.workspace
       .getLeavesOfType("markdown")
-      .map((leaf) => leaf.view as MarkdownView)
-      .find((v) => v.file?.path === record.path);
+      .map((leaf) => leaf.view)
+      .find((v): v is MarkdownView => v instanceof MarkdownView && v.file?.path === record.path);
 
     // Заметку могли закрыть — тогда правим файл. Открытую правим через редактор:
     // так уцелеет несохранённое и сработает обычный Ctrl+Z.

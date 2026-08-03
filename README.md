@@ -19,10 +19,11 @@ sidebar, but the main road is selection → key → done.
 - **Actions over the selection.** Fix spelling, improve the text, expand it, shorten it,
   evaluate it — or write your own prompt. The result replaces the selected text; the undo
   is the usual `Ctrl+Z`.
-- **Quick menu** (`Alt+1`) opens over the selection: the digits run your presets — five
-  keys to begin with, up to nine if you add them — and the field below takes a one-off
-  instruction. The digit only picks a preset while the field is empty, so a prompt can
-  start with a number. The physical key is what counts, so any keyboard layout works.
+- **Quick menu** opens over the selection: the digits run your presets — five keys to begin
+  with, up to nine if you add them — and the field below takes a one-off instruction. The
+  digit only picks a preset while the field is empty, so a prompt can start with a number.
+  The physical key is what counts, so any keyboard layout works. The menu comes without a
+  key of its own: switch on `Alt+1` in the settings, or bind whatever suits you.
 - **Ask about a fragment.** Select a piece of a note and go to the chat: it comes along as
   an attachment, so the question can be just "and shorter?" — and the fragment stays with
   the conversation for the questions that follow.
@@ -54,7 +55,9 @@ none is sent.
 1. Install the plugin and open its settings.
 2. Pick a provider, paste the API key, and choose a model — the "Fetch" button asks the
    provider for the list. There is a "Test connection" button right below.
-3. Select some text in a note and press `Alt+1`.
+3. In the "Quick menu" section, switch on `Alt+1` — or give the "Quick menu over the
+   selection" command a key of your own in Obsidian's hotkey settings.
+4. Select some text in a note and press it.
 
 ## Settings
 
@@ -74,7 +77,7 @@ Everything lives in three sections:
 
 Every action is a command, so any of them can get a hotkey of your own. Plus: open the
 chat, ask about the selection, repeat the last action, stop generation, and the quick menu
-(`Alt+1` out of the box).
+(which takes `Alt+1` if you switch it on in the settings).
 
 ## What is sent where
 
@@ -82,6 +85,11 @@ The text you run an action on goes to the provider you configured, and nowhere e
 plugin has no telemetry, no analytics and no server of its own; the settings live in
 `.obsidian/plugins/ai-assist/data.json` and the chat history in `history.json` next to it,
 inside your vault.
+
+Two things send more than the question itself. "Send the current note as context" attaches
+the open note to every request in the chat. And a model allowed to edit notes can read the
+open one whenever it decides to — that is a separate switch, and every call it makes is
+shown in the panel as a card.
 
 ## Requirements
 

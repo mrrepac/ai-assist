@@ -123,7 +123,9 @@ export class ChatView extends ItemView {
     ctx.onclick = () => {
       this.host.settings.chatContextNote = !this.host.settings.chatContextNote;
       ctx.toggleClass("is-active", this.host.settings.chatContextNote);
-      this.host.persistHistory();
+      // Это настройка, а не лента: пишется в data.json. Через persistHistory
+      // значение оседало только в памяти и к следующему запуску пропадало.
+      void this.host.saveSettings();
     };
     const more = bar.createEl("button", { cls: "ai-bar-btn clickable-icon" });
     setIcon(more, "ellipsis");
@@ -559,9 +561,14 @@ export class ChatView extends ItemView {
       if (err.aborted || controller.signal.aborted) {
         // Оборванный ответ всё равно полезен — оставляем то, что успело прийти.
         if (answer.trim()) {
-          this.host.history.push({ role: "assistant", content: answer, reasoning });
-          this.host.persistHistory();
           await this.renderMarkdown(answer, body);
+          // Но в ленту он идёт, только если запрос сняли кнопкой, а не новым
+          // вопросом: дописанный в конец, он встал бы после чужого вопроса — и
+          // в ленте, и в контексте следующего запроса разговор бы перепутался.
+          if (this.controller === null || this.controller === controller) {
+            this.host.history.push({ role: "assistant", content: answer, reasoning });
+            this.host.persistHistory();
+          }
         } else {
           bubble.remove();
         }

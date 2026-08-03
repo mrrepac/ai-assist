@@ -59,7 +59,19 @@ check("адрес со слэшем", endpoint("https://api.deepseek.com/", "/ch
 check("адрес с /v1", endpoint("https://openrouter.ai/api/v1", "/chat/completions"), "https://openrouter.ai/api/v1/chat/completions");
 check("уже полный путь", endpoint("https://x.ai/v1/chat/completions", "/chat/completions"), "https://x.ai/v1/chat/completions");
 check("без протокола", endpoint("api.deepseek.com", "/models"), "https://api.deepseek.com/models");
-check("пустая строка → DeepSeek", endpoint("", "/models"), "https://api.deepseek.com/models");
+// Пустой адрес когда-то подставлял DeepSeek: выбрал «свой адрес», ещё ничего не
+// вписал, нажал «Проверить» — и ключ уехал чужому провайдеру.
+const thrown = (fn) => {
+  try {
+    fn();
+    return "без ошибки";
+  } catch (e) {
+    return e.name;
+  }
+};
+check("пустой адрес — отказ, а не чужой провайдер", thrown(() => endpoint("", "/models")), "ApiError");
+check("метод в адресе не мешает списку моделей", endpoint("https://x.ai/v1/chat/completions", "/models"), "https://x.ai/v1/models");
+check("хвостовой /models тоже снимается", endpoint("https://x.ai/v1/models", "/chat/completions"), "https://x.ai/v1/chat/completions");
 
 // ——— разбор потока ———
 const collect = (chunks) => {
@@ -267,6 +279,12 @@ check("имя тоже может приехать частями", toolCalls([
   toolEvent({ index: 0, id: "c", function: { name: "insert_", arguments: "" } }),
   toolEvent({ index: 0, function: { name: "text", arguments: "{}" } }),
 ])[0].name, "insert_text");
+// Часть провайдеров шлёт имя целиком в каждом чанке: склейка дала бы
+// «read_noteread_note», а такого инструмента нет — правка бы не состоялась.
+check("повторённое имя не удваивается", toolCalls([
+  toolEvent({ index: 0, id: "d", function: { name: "read_note", arguments: "" } }),
+  toolEvent({ index: 0, function: { name: "read_note", arguments: "{}" } }),
+])[0].name, "read_note");
 
 // ——— разбор вызова ———
 const HERE = "Заметки/Текущая.md";
@@ -526,6 +544,21 @@ check(
   "мелкая правка в огромном тексте всё равно находится",
   changes("хвост ".repeat(5000) + "карова", "хвост ".repeat(5000) + "корова"),
   ["карова→корова"],
+);
+// Считается n×m клеток, поэтому предел стоит и на произведении: каждая сторона
+// сама по себе в MAX_TOKENS укладывается, а вместе они дают почти семь
+// миллионов клеток на одно сравнение.
+check(
+  "две огромные стороны сворачиваются в один счёт",
+  diffWords("слово ".repeat(1300), "иное ".repeat(1300)).segments.length,
+  0,
+);
+// Правок тут всё равно больше, чем показывают (это уже про MAX_CHANGES), но
+// первые из них видны — а из-за предела на клетки не осталось бы ни одной.
+check(
+  "переписанная заметка обычного размера всё ещё показывается правками",
+  diffWords("слово ".repeat(700), "иное ".repeat(700)).segments.length > 0,
+  true,
 );
 
 // ——— провайдеры ———

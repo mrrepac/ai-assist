@@ -53,9 +53,10 @@ const en = {
   quickHintMac: "A digit — a preset · Enter — rewrite the text · ⌘Enter — answer in the chat · ↑ — previous prompts",
   quickHead: "Quick menu",
   quickDesc:
-    "Alt+1 opens a window over the selected text: type your own instruction, or press a digit " +
-    "for a preset. The digit only picks a preset while the field is empty, so a prompt can " +
-    "start with a number. The physical key matters, not the character, so any layout works.\n\n" +
+    "The quick menu opens a window over the selected text: type your own instruction, or press " +
+    "a digit for a preset. The digit only picks a preset while the field is empty, so a prompt " +
+    "can start with a number. The physical key matters, not the character, so any layout " +
+    "works.\n\n" +
     "There are five keys to begin with, and up to nine if you add them. Drag a row by its " +
     "handle to move an action to another key. The pencil opens the action itself: name, icon, " +
     "prompt and what to do with the answer. An action taken off a key is not lost: it keeps " +
@@ -130,7 +131,9 @@ const en = {
   setTools: "Let the model edit the note",
   setToolsDesc:
     "The model gets tools for writing into the open note and creating new ones, and uses them " +
-    "instead of telling you to copy text by hand. Costs a couple of hundred extra tokens per request.",
+    "instead of telling you to copy text by hand. It can also read the open note by itself — " +
+    "even when the note is not sent as context — and every call is shown in the panel. " +
+    "Costs a couple of hundred extra tokens per request.",
   setToolConfirm: "Ask before every edit",
   setToolConfirmDesc:
     "An edit appears in the panel with an Apply button. Turn off and the model writes into the " +
@@ -274,6 +277,7 @@ const en = {
   // ——— ошибки ———
   errNoKey: "No API key — add it in the plugin settings",
   errNoModel: "No model selected — pick one in the plugin settings",
+  errNoUrl: "No address — type the API base URL in the plugin settings",
   errAuth: "The API rejected the key",
   errBalance: "Not enough balance on the API account",
   errForbidden: "Access denied",
@@ -350,9 +354,9 @@ const ru: typeof en = {
   quickHintMac: "Цифра — готовое · Enter — переписать текст · ⌘Enter — ответ в чат · ↑ — прошлые промпты",
   quickHead: "Быстрое меню",
   quickDesc:
-    "Alt+1 открывает окно над выделенным текстом: пиши свою инструкцию или жми цифру для " +
-    "готового действия. Цифра выбирает действие, только пока поле пустое, — так промпт может " +
-    "начинаться с числа. Клавиша считается физическая, так что раскладка не мешает.\n\n" +
+    "Быстрое меню открывает окно над выделенным текстом: пиши свою инструкцию или жми цифру " +
+    "для готового действия. Цифра выбирает действие, только пока поле пустое, — так промпт " +
+    "может начинаться с числа. Клавиша считается физическая, так что раскладка не мешает.\n\n" +
     "Клавиш сразу пять, а если мало — добавь ещё, до девяти. Строку можно перетащить за ручку: " +
     "так действие переезжает на другую клавишу. Карандаш открывает само действие: название, " +
     "иконка, промпт и что делать с ответом. Снятое с клавиши действие не пропадает: у него " +
@@ -427,7 +431,9 @@ const ru: typeof en = {
   setTools: "Разрешить модели править заметку",
   setToolsDesc:
     "Модель получает инструменты для записи в открытую заметку и создания новых и пользуется ими " +
-    "вместо «скопируй вручную». Стоит лишних пары сотен токенов на запрос.",
+    "вместо «скопируй вручную». Открытую заметку она при этом может прочитать сама — даже если " +
+    "заметка не отправляется как контекст, — и каждый вызов виден в панели. " +
+    "Стоит лишних пары сотен токенов на запрос.",
   setToolConfirm: "Спрашивать перед каждой правкой",
   setToolConfirmDesc:
     "Правка появляется в панели с кнопкой «Применить». Выключишь — модель пишет в заметку сразу, " +
@@ -572,6 +578,7 @@ const ru: typeof en = {
   // ——— ошибки ———
   errNoKey: "Нет ключа API — впиши его в настройках плагина",
   errNoModel: "Не выбрана модель — укажи её в настройках плагина",
+  errNoUrl: "Нет адреса — впиши адрес API в настройках плагина",
   errAuth: "API не принял ключ",
   errBalance: "На счету API кончились средства",
   errForbidden: "Доступ запрещён",

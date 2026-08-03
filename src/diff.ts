@@ -28,6 +28,14 @@ export interface DiffResult {
 
 /** Больше — считаем слишком долго; общий префикс и суффикс режутся заранее. */
 const MAX_TOKENS = 3000;
+/**
+ * Съедает время и память именно произведение сторон, а не длина каждой: предел
+ * в три тысячи с каждой стороны сам по себе разрешает девять миллионов клеток
+ * на одно сравнение, чего телефон не прощает. Здесь оставлено столько, чтобы
+ * переписанная целиком заметка обычного размера всё ещё показывалась правками —
+ * ради этого карточку и смотрят, — а пара огромных текстов свернулась в счёт.
+ */
+const MAX_CELLS = 6_000_000;
 /** Столько правок ещё можно осмотреть глазами. */
 const MAX_CHANGES = 24;
 /** Сколько символов уцелевшего текста оставляем вокруг правки. */
@@ -69,7 +77,11 @@ export function diffWords(before: string, after: string): DiffResult | null {
   const midA = a.slice(head, a.length - tail);
   const midB = b.slice(head, b.length - tail);
   if (midA.length === 0 && midB.length === 0) return null;
-  if (midA.length > MAX_TOKENS || midB.length > MAX_TOKENS) {
+  if (
+    midA.length > MAX_TOKENS ||
+    midB.length > MAX_TOKENS ||
+    midA.length * midB.length > MAX_CELLS
+  ) {
     return {
       segments: [],
       tooMany: true,
@@ -175,7 +187,9 @@ function shorten(segments: DiffSegment[]): DiffSegment[] {
 function collectSegments(a: string[], b: string[]): DiffSegment[] {
   const n = a.length;
   const m = b.length;
-  const lcs: Int32Array[] = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  // В клетке лежит длина общей подпоследовательности, а она не длиннее короткой
+  // стороны: двух байт хватает с запасом, а памяти уходит вдвое меньше.
+  const lcs: Uint16Array[] = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {
       lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);

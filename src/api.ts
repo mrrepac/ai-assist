@@ -180,15 +180,25 @@ export class ApiError extends Error {
 }
 
 /**
- * base URL пользователь пишет как ему привычно: с /v1, без, со слэшем на конце.
- * Приводим к полному адресу метода, не ломая уже полный путь.
+ * Методы, которые пользователь мог захватить, копируя адрес из документации.
+ * Снимаем их с хвоста: иначе к адресу с /chat/completions припишется /models,
+ * и список моделей уедет в никуда.
+ */
+const METHODS = ["/chat/completions", "/completions", "/models"];
+
+/**
+ * base URL пользователь пишет как ему привычно: с /v1, без, со слэшем на конце,
+ * а то и целиком с методом. Приводим к полному адресу нужного метода.
  */
 export function endpoint(baseUrl: string, path: string): string {
   let base = baseUrl.trim().replace(/\/+$/, "");
-  if (!base) base = "https://api.deepseek.com";
+  // Пустой адрес раньше молча подставлял DeepSeek: выбрал «свой адрес», ещё
+  // ничего не вписал, нажал «Проверить» — и ключ уехал чужому провайдеру.
+  if (!base) throw new ApiError(t("errNoUrl"));
   // Адрес без протокола: локальный сервер по https не отвечает, остальные — да.
   if (!/^https?:\/\//i.test(base)) base = (isLocalUrl("http://" + base) ? "http://" : "https://") + base;
-  if (base.endsWith(path)) return base;
+  const method = METHODS.find((m) => base.endsWith(m));
+  if (method) base = base.slice(0, -method.length);
   return base + path;
 }
 
@@ -287,22 +297,24 @@ async function plainChat(
   messages: ChatMessage[],
   opts: ChatOptions,
 ): Promise<ChatResult> {
+  const url = endpoint(cfg.baseUrl, "/chat/completions");
   // requestUrl прервать нечем — ждём его наперегонки с таймером и с кнопкой
   // «Стоп». Проигравший запрос дойдёт в никуда, но это лучше, чем ожидание без
   // конца и кнопка, которая на нестримовом пути ничего не делает.
   const race = expiry(REPLY_TIMEOUT, opts.signal);
   let res;
   try {
-    res = await Promise.race([
-      requestUrl({
-        url: endpoint(cfg.baseUrl, "/chat/completions"),
-        method: "POST",
-        headers: headers(cfg),
-        body: body(cfg, messages, opts),
-        throw: false,
-      }),
-      race.promise,
-    ]);
+    const request = requestUrl({
+      url,
+      method: "POST",
+      headers: headers(cfg),
+      body: body(cfg, messages, opts),
+      throw: false,
+    });
+    // Проигравший гонку промис остаётся без обработчика: упади запрос по сети
+    // уже после того, как ожидание сняли, это всплыло бы unhandled rejection.
+    request.catch(() => {});
+    res = await Promise.race([request, race.promise]);
   } catch (e) {
     if (e instanceof ApiError) throw e;
     throw new ApiError(t("errNetwork") + " " + (e instanceof Error ? e.message : String(e)));
@@ -353,6 +365,9 @@ async function streamChat(
   messages: ChatMessage[],
   opts: ChatOptions,
 ): Promise<ChatResult> {
+  // Адрес считаем до того, как заведён отсчёт: кривой адрес — это отказ сразу,
+  // а не «запрос не прошёл», в который его завернул бы catch ниже.
+  const url = endpoint(cfg.baseUrl, "/chat/completions");
   // Свой сигнал поверх пользовательского: кроме кнопки «Стоп», запрос снимает
   // тишина в потоке — иначе оборванное соединение висит молча и бесконечно.
   const guard = deadline(opts.signal, IDLE_TIMEOUT);
@@ -363,7 +378,7 @@ async function streamChat(
     // целиком и тела по кускам не имеет, а без этого нет и печати ответа на
     // глазах. Провайдер без CORS ломает ровно этот путь — тогда работает
     // нестримовый plainChat на requestUrl, и настройка стрима прячется.
-    res = await fetch(endpoint(cfg.baseUrl, "/chat/completions"), {
+    res = await fetch(url, {
       method: "POST",
       headers: headers(cfg),
       body: body(cfg, messages, opts),
@@ -443,7 +458,11 @@ export function collectToolCalls(delta: WireDelta, calls: Map<number, ToolCall>)
     const index = typeof tc.index === "number" ? tc.index : 0;
     const call = calls.get(index) ?? { id: "", name: "", arguments: "" };
     if (tc.id) call.id = tc.id;
-    if (tc.function?.name) call.name += tc.function.name;
+    // Имя приезжает кусками, но часть провайдеров шлёт его целиком в каждом
+    // чанке: без проверки на повтор вышло бы «read_noteread_note», а такого
+    // инструмента нет, и правка не состоялась бы.
+    const name = tc.function?.name;
+    if (name && call.name !== name) call.name += name;
     if (tc.function?.arguments) call.arguments += tc.function.arguments;
     calls.set(index, call);
   }
