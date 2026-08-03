@@ -127,6 +127,23 @@ export function cleanReply(raw: string, original: string): string {
   return lead + out + tail;
 }
 
+/**
+ * Строка и колонка → смещение в тексте. Нужно там, где редактора уже нет:
+ * координаты правки записаны, а считать по ним приходится в сыром файле.
+ * null — такого места в тексте нет (заметку успели укоротить).
+ */
+export function offsetAt(text: string, line: number, ch: number): number | null {
+  let at = 0;
+  for (let n = 0; n < line; n++) {
+    const nl = text.indexOf("\n", at);
+    if (nl === -1) return null;
+    at = nl + 1;
+  }
+  const end = text.indexOf("\n", at);
+  const width = (end === -1 ? text.length : end) - at;
+  return ch > width ? null : at + ch;
+}
+
 /** Есть ли в выделении хоть что-то осмысленное. */
 export function hasText(s: string): boolean {
   return s.trim().length > 0;

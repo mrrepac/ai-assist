@@ -98,6 +98,79 @@ export interface ChatOptions {
   tools?: ToolSpec[];
 }
 
+/**
+ * Сколько ждём молчания в потоке. Отсчёт начинается заново на каждом куске:
+ * длинный ответ печатается минутами, и ограничивать надо не его, а паузу —
+ * без этого повисший запрос ждётся до перезапуска Obsidian.
+ */
+const IDLE_TIMEOUT = 120_000;
+
+/**
+ * Столько ждём ответ целиком, когда потока нет. Здесь пауза — это весь запрос:
+ * пока модель не договорит, не приходит ничего, поэтому предел щедрее.
+ */
+const REPLY_TIMEOUT = 300_000;
+
+/** Отсчёт до отказа: сам прерывает запрос и помнит, что это был именно он. */
+interface Deadline {
+  signal: AbortSignal;
+  /** Ответ подал признаки жизни — начинаем отсчёт заново. */
+  ping(): void;
+  /** Ждать больше нечего: снимаем таймер и отписываемся. */
+  done(): void;
+  /** Прервано по тишине, а не кнопкой «Стоп». */
+  expired: boolean;
+}
+
+/** Свой сигнал поверх пользовательского: прерываем и по кнопке, и по тишине. */
+function deadline(outer: AbortSignal | undefined, ms: number): Deadline {
+  const ctrl = new AbortController();
+  const state: Deadline = { signal: ctrl.signal, expired: false, ping: () => {}, done: () => {} };
+
+  const fire = () => {
+    state.expired = true;
+    ctrl.abort();
+  };
+  let timer = window.setTimeout(fire, ms);
+  const relay = () => ctrl.abort();
+  outer?.addEventListener("abort", relay);
+  if (outer?.aborted) ctrl.abort();
+
+  state.ping = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(fire, ms);
+  };
+  state.done = () => {
+    window.clearTimeout(timer);
+    outer?.removeEventListener("abort", relay);
+  };
+  return state;
+}
+
+/**
+ * Промис, который сам по себе не сбывается никогда, а отказывает по таймеру или
+ * по кнопке «Стоп». Нужен там, где запрос отменить нечем, — с ним ожидание всё
+ * равно заканчивается.
+ */
+function expiry(ms: number, outer?: AbortSignal): { promise: Promise<never>; cancel: () => void } {
+  let timer = 0;
+  let onAbort = () => {};
+  const promise = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => reject(new ApiError(t("errTimeout"))), ms);
+    if (!outer) return;
+    onAbort = () => reject(new ApiError(t("errAborted"), 0, true));
+    if (outer.aborted) onAbort();
+    else outer.addEventListener("abort", onAbort);
+  });
+  return {
+    promise,
+    cancel: () => {
+      window.clearTimeout(timer);
+      outer?.removeEventListener("abort", onAbort);
+    },
+  };
+}
+
 /** Ошибка вызова модели: понятный текст + код, чтобы вызывающий мог решать. */
 export class ApiError extends Error {
   constructor(message: string, readonly status = 0, readonly aborted = false) {
@@ -178,7 +251,10 @@ function describeError(status: number, raw: string): ApiError {
     503: t("errBusy"),
   };
   const head = known[status] ?? `${t("errHttp")} ${status}`;
-  return new ApiError(detail ? `${head} — ${detail}` : head, status);
+  // Модель без function calling отвечает на инструменты отказом по формату, и из
+  // голого «провайдер отклонил запрос» этого никак не понять.
+  const hint = /tool|function[ _-]?call/i.test(detail) ? " " + t("errTools") : "";
+  return new ApiError((detail ? `${head} — ${detail}` : head) + hint, status);
 }
 
 function readUsage(u: WireUsage | undefined): Usage | null {
@@ -211,17 +287,27 @@ async function plainChat(
   messages: ChatMessage[],
   opts: ChatOptions,
 ): Promise<ChatResult> {
+  // requestUrl прервать нечем — ждём его наперегонки с таймером и с кнопкой
+  // «Стоп». Проигравший запрос дойдёт в никуда, но это лучше, чем ожидание без
+  // конца и кнопка, которая на нестримовом пути ничего не делает.
+  const race = expiry(REPLY_TIMEOUT, opts.signal);
   let res;
   try {
-    res = await requestUrl({
-      url: endpoint(cfg.baseUrl, "/chat/completions"),
-      method: "POST",
-      headers: headers(cfg),
-      body: body(cfg, messages, opts),
-      throw: false,
-    });
+    res = await Promise.race([
+      requestUrl({
+        url: endpoint(cfg.baseUrl, "/chat/completions"),
+        method: "POST",
+        headers: headers(cfg),
+        body: body(cfg, messages, opts),
+        throw: false,
+      }),
+      race.promise,
+    ]);
   } catch (e) {
+    if (e instanceof ApiError) throw e;
     throw new ApiError(t("errNetwork") + " " + (e instanceof Error ? e.message : String(e)));
+  } finally {
+    race.cancel();
   }
   if (res.status >= 400) throw describeError(res.status, res.text ?? "");
 
@@ -267,6 +353,10 @@ async function streamChat(
   messages: ChatMessage[],
   opts: ChatOptions,
 ): Promise<ChatResult> {
+  // Свой сигнал поверх пользовательского: кроме кнопки «Стоп», запрос снимает
+  // тишина в потоке — иначе оборванное соединение висит молча и бесконечно.
+  const guard = deadline(opts.signal, IDLE_TIMEOUT);
+
   let res: Response;
   try {
     // Здесь и только здесь вместо requestUrl идёт fetch: requestUrl отдаёт ответ
@@ -277,15 +367,23 @@ async function streamChat(
       method: "POST",
       headers: headers(cfg),
       body: body(cfg, messages, opts),
-      signal: opts.signal,
+      signal: guard.signal,
     });
   } catch (e) {
+    guard.done();
+    if (guard.expired) throw new ApiError(t("errTimeout"));
     if (opts.signal?.aborted) throw new ApiError(t("errAborted"), 0, true);
     // Сюда же попадает CORS-отказ: браузерный fetch не различает его и обрыв сети.
     throw new ApiError(t("errNetworkStream") + " " + (e instanceof Error ? e.message : String(e)));
   }
-  if (!res.ok) throw describeError(res.status, await res.text().catch(() => ""));
-  if (!res.body) throw new ApiError(t("errNoStream"));
+  if (!res.ok) {
+    guard.done();
+    throw describeError(res.status, await res.text().catch(() => ""));
+  }
+  if (!res.body) {
+    guard.done();
+    throw new ApiError(t("errNoStream"));
+  }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -299,6 +397,7 @@ async function streamChat(
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
+      guard.ping(); // пришёл кусок — отсчёт тишины начинается заново
       buffer += decoder.decode(value, { stream: true });
 
       buffer = drainSse(buffer, (chunk) => {
@@ -318,6 +417,7 @@ async function streamChat(
       });
     }
   } catch (e) {
+    if (guard.expired) throw new ApiError(t("errTimeout"));
     if (opts.signal?.aborted) {
       // Остановка по кнопке — не ошибка: отдаём то, что успело прийти.
       // Недособранные вызовы инструментов при этом выбрасываем: половина
@@ -326,6 +426,7 @@ async function streamChat(
     }
     throw new ApiError(t("errStreamBroken") + " " + (e instanceof Error ? e.message : String(e)));
   } finally {
+    guard.done();
     reader.releaseLock();
   }
 

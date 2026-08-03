@@ -35,7 +35,8 @@ export type ReplaceResult = "ok" | "missing" | "many" | "gone";
 export interface ToolHost {
   /** Заметка, в которую сейчас пошла бы правка. */
   targetPath(): string | null;
-  readNote(): { path: string; text: string } | null;
+  /** clipped — заметка длиннее предела и отдана началом. */
+  readNote(): { path: string; text: string; clipped: boolean } | null;
   /** Текст заметки целиком, без урезания, — чтобы показать правку на карточке. */
   noteText(path: string): string | null;
   insertText(text: string, path: string): boolean;
@@ -209,7 +210,11 @@ export async function runCall(host: ToolHost, parsed: ParsedCall): Promise<strin
   switch (parsed.name) {
     case "read_note": {
       const note = host.readNote();
-      return note ? `Note "${note.path}":\n\n${note.text}` : "No note is open.";
+      if (!note) return "No note is open.";
+      // Про обрезку говорим прямо: иначе модель примет начало за весь текст и
+      // станет переписывать заметку по половине.
+      const tail = note.clipped ? "\n\n[The note is longer — only the beginning is shown.]" : "";
+      return `Note "${note.path}":\n\n${note.text}${tail}`;
     }
     case "insert_text":
       if (!text) return "Nothing to insert: the text argument was empty.";

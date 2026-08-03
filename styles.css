@@ -84,6 +84,14 @@
   font-size: var(--font-ui-small);
 }
 
+/* Сообщение от плагина, а не от модели: почему разговор оборвался. */
+.ai-assist-chat .ai-notice {
+  padding: var(--size-2-2) var(--size-4-2);
+  border-left: 2px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
 .ai-assist-chat .ai-msg-role {
   font-size: var(--font-ui-smaller);
   color: var(--text-faint);
@@ -580,6 +588,13 @@
 
 .ai-status-icon {
   display: flex;
+}
+
+/* Уведомления, по которым жмут: остановить правку, вернуть очищенную ленту. */
+.ai-busy-notice,
+.ai-undo-notice {
+  cursor: pointer;
+  white-space: pre-line;
 }
 
 .ai-status-icon .svg-icon {

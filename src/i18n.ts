@@ -118,11 +118,11 @@ const en = {
   cmdQuick: "Quick menu over the selection",
   quickTitle: "What to do with the text",
   quickPlaceholder: "Write your own instruction…",
-  quickHint: "1–5 — a preset · Enter — rewrite the text · Ctrl+Enter — answer in the chat · ↑ — previous prompts",
-  quickHintMac: "1–5 — a preset · Enter — rewrite the text · ⌘Enter — answer in the chat · ↑ — previous prompts",
+  quickHint: "1–9 — a preset · Enter — rewrite the text · Ctrl+Enter — answer in the chat · ↑ — previous prompts",
+  quickHintMac: "1–9 — a preset · Enter — rewrite the text · ⌘Enter — answer in the chat · ↑ — previous prompts",
   quickHead: "Quick menu",
   quickDesc:
-    "Alt+1 opens a window over the selected text: type your own instruction, or press 1–5 for " +
+    "Alt+1 opens a window over the selected text: type your own instruction, or press 1–9 for " +
     "a preset. The digit only picks a preset while the field is empty, so a prompt can start " +
     "with a number. The physical key matters, not the character, so any layout works.\n\n" +
     "This is also where an action is edited: pick it in a slot and press the pencil — name, icon, " +
@@ -149,6 +149,8 @@ const en = {
   chatContextOn: "Context: note",
   chatWaiting: "Thinking…",
   chatCleared: "Chat cleared",
+  chatUndoClear: "Click to bring it back",
+  chatContextClipped: "The note is long — only its beginning went into the context.",
   chatCopied: "Copied",
   chatInserted: "Inserted into the note",
   chatNoEditor: "Open a note to insert the answer into",
@@ -201,6 +203,7 @@ const en = {
   busy: "AI: {action}…",
   busyBar: "AI…",
   busyStop: "Click to stop",
+  busyStopTap: "Tap to stop",
   logRunning: "working…",
   logDone: "done",
   logNothing: "nothing to change",
@@ -350,6 +353,11 @@ const en = {
   errNoStream: "The provider answered without a stream",
   errStreamBroken: "The stream broke:",
   errAborted: "Stopped",
+  chatToolLimit:
+    "The model used up all {steps} rounds of edits and is still going. What it did is applied; " +
+    "ask again if the work is not finished.",
+  errTimeout: "The provider stopped answering — the request was dropped",
+  errTools: "This model does not seem to support tools — turn them off in the settings",
   errModelList: "The provider did not return a list of models",
 };
 
@@ -465,11 +473,11 @@ const ru: typeof en = {
   cmdQuick: "Быстрое меню над выделением",
   quickTitle: "Что сделать с текстом",
   quickPlaceholder: "Напиши, что сделать…",
-  quickHint: "1–5 — готовое · Enter — переписать текст · Ctrl+Enter — ответ в чат · ↑ — прошлые промпты",
-  quickHintMac: "1–5 — готовое · Enter — переписать текст · ⌘Enter — ответ в чат · ↑ — прошлые промпты",
+  quickHint: "1–9 — готовое · Enter — переписать текст · Ctrl+Enter — ответ в чат · ↑ — прошлые промпты",
+  quickHintMac: "1–9 — готовое · Enter — переписать текст · ⌘Enter — ответ в чат · ↑ — прошлые промпты",
   quickHead: "Быстрое меню",
   quickDesc:
-    "Alt+1 открывает окно над выделенным текстом: пиши свою инструкцию или жми 1–5 для готового " +
+    "Alt+1 открывает окно над выделенным текстом: пиши свою инструкцию или жми 1–9 для готового " +
     "действия. Цифра выбирает действие, только пока поле пустое, — так промпт может начинаться " +
     "с числа. Клавиша считается физическая, так что раскладка не мешает.\n\n" +
     "Здесь же действие и правится: выбери его в слоте и жми карандаш — название, иконка, промпт " +
@@ -496,6 +504,8 @@ const ru: typeof en = {
   chatContextOn: "Контекст: заметка",
   chatWaiting: "Думает…",
   chatCleared: "Чат очищен",
+  chatUndoClear: "Нажми, чтобы вернуть",
+  chatContextClipped: "Заметка длинная — в контекст ушло только её начало.",
   chatCopied: "Скопировано",
   chatInserted: "Вставлено в заметку",
   chatNoEditor: "Открой заметку, куда вставлять ответ",
@@ -548,6 +558,7 @@ const ru: typeof en = {
   busy: "ИИ: {action}…",
   busyBar: "ИИ…",
   busyStop: "Клик — остановить",
+  busyStopTap: "Нажми, чтобы остановить",
   logRunning: "идёт…",
   logDone: "готово",
   logNothing: "менять нечего",
@@ -698,6 +709,11 @@ const ru: typeof en = {
   errNoStream: "Провайдер ответил без потока",
   errStreamBroken: "Поток оборвался:",
   errAborted: "Остановлено",
+  chatToolLimit:
+    "Модель израсходовала все {steps} кругов правок и не закончила. Сделанное применено; " +
+    "спроси ещё раз, если работа не доведена до конца.",
+  errTimeout: "Провайдер перестал отвечать — запрос снят",
+  errTools: "Похоже, эта модель не умеет инструменты — выключи их в настройках",
   errModelList: "Провайдер не отдал список моделей",
 };
 

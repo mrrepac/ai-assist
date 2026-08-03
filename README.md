@@ -19,7 +19,7 @@ sidebar, but the main road is selection → key → done.
 - **Actions over the selection.** Fix spelling, make it clearer, expand, shorten,
   evaluate, clean up a transcript — or write your own prompt. The result replaces the
   selected text; the undo is the usual `Ctrl+Z`.
-- **Quick menu** (`Alt+1`) opens over the selection: keys `1`–`5` run your five presets,
+- **Quick menu** (`Alt+1`) opens over the selection: keys `1`–`9` run your presets,
   and the field below takes a one-off instruction. The digit only picks a preset while the
   field is empty, so a prompt can start with a number. The physical key is what counts, so
   any keyboard layout works.
@@ -61,7 +61,7 @@ Everything lives in three sections:
 - **Behaviour** — temperature, response length limit, streaming, thinking (DeepSeek),
   what to do when nothing is selected (the whole note / the paragraph under the cursor /
   nothing), token usage display, note editing tools, the system prompt for the chat.
-- **Quick menu** — the five slots. Each slot is an action, and this is where an action is
+- **Quick menu** — the nine slots. Each slot is an action, and this is where an action is
   edited: name, icon, prompt, and what to do with the answer. Your own action is created
   in a slot too. An action taken off a slot is not lost — it keeps its own command, and a
   command can be given a hotkey.
@@ -75,8 +75,9 @@ chat, ask about the selection, repeat the last action, stop generation, and the 
 ## What is sent where
 
 The text you run an action on goes to the provider you configured, and nowhere else. The
-plugin has no telemetry, no analytics and no server of its own; the chat history and the
-settings live in `.obsidian/plugins/ai-assist/data.json` inside your vault.
+plugin has no telemetry, no analytics and no server of its own; the settings live in
+`.obsidian/plugins/ai-assist/data.json` and the chat history in `history.json` next to it,
+inside your vault.
 
 ## Requirements
 

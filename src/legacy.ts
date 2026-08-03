@@ -104,6 +104,8 @@ const LEGACY_SLOTS = [
   ["spelling", "clarify", "shorten", "evaluate", "translate"],
   ["spelling", "format", "clarify", "shorten", "evaluate"],
   ["spelling", "expand", "format", "shorten", "evaluate"],
+  // v0.1.0—0.1.4: пять слотов. Дальше их девять, и набор по умолчанию другой.
+  ["spelling", "expand", "clarify", "shorten", "evaluate"],
 ].map((s) => s.join("\u0000"));
 
 /** Остались ли слоты такими, какими их поставила прошлая версия плагина. */

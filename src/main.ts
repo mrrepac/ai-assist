@@ -10,7 +10,7 @@ import {
   moment,
   setIcon,
 } from "obsidian";
-import { AiAction, cleanReply, hasText, shortName, systemFor } from "./actions";
+import { AiAction, cleanReply, hasText, offsetAt, shortName, systemFor } from "./actions";
 import { ApiConfig, ApiError, Usage, chat } from "./api";
 import { chatToMarkdown } from "./chatnote";
 import { diffWords } from "./diff";
@@ -48,6 +48,15 @@ const LOG_PREVIEW = 600;
  * растёт всю сессию. Ctrl+Z в редакторе от этого не зависит.
  */
 const UNDO_LIMIT = 20;
+
+/**
+ * Заметка в контекст: длинную берём началом. Что она обрезана, говорим и модели,
+ * и пользователю — иначе ответ по половине текста выглядит как ответ по всему.
+ */
+function clip(text: string): { text: string; clipped: boolean } {
+  if (text.length <= CONTEXT_LIMIT) return { text, clipped: false };
+  return { text: text.slice(0, CONTEXT_LIMIT), clipped: true };
+}
 
 /** Что нужно, чтобы отменить одну правку. */
 interface UndoRecord {
@@ -165,17 +174,51 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     if (this.saveTimer !== null) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = null;
-      void this.saveData(this.storable());
+      void this.writeHistory(this.history.slice(-HISTORY_LIMIT));
     }
   }
 
   // ——————————————————————— хранилище ———————————————————————
 
+  /** Где лежит лента. Отдельно от настроек — она меняется на каждое слово. */
+  private historyPath(): string {
+    return `${this.manifest.dir ?? ""}/history.json`;
+  }
+
+  /**
+   * Лента из своего файла, а если его нет — из настроек: там она жила до сих
+   * пор. Прочитанное сразу переносим, и в data.json остаются одни настройки.
+   */
+  private async loadHistory(stored: HistoryItem[] | undefined): Promise<HistoryItem[]> {
+    const path = this.historyPath();
+    try {
+      if (await this.app.vault.adapter.exists(path)) {
+        const raw = JSON.parse(await this.app.vault.adapter.read(path)) as unknown;
+        return Array.isArray(raw) ? (raw as HistoryItem[]) : [];
+      }
+    } catch {
+      // Файл побился — лента не то, ради чего стоит падать при загрузке.
+      return [];
+    }
+    if (!Array.isArray(stored) || stored.length === 0) return [];
+    const history = stored.slice(-HISTORY_LIMIT);
+    await this.writeHistory(history);
+    await this.saveData({ settings: this.settings });
+    return history;
+  }
+
+  private async writeHistory(history: HistoryItem[]): Promise<void> {
+    try {
+      await this.app.vault.adapter.write(this.historyPath(), JSON.stringify(history));
+    } catch (e) {
+      console.error("ai-assist: не удалось записать историю", e);
+    }
+  }
+
   private async loadStore(): Promise<void> {
     const raw = (await this.loadData()) as Partial<StoredData> | null;
     this.settings = mergeSettings(raw?.settings ?? raw);
-    const stored = raw?.history;
-    this.history = Array.isArray(stored) ? stored.slice(-HISTORY_LIMIT) : [];
+    this.history = (await this.loadHistory(raw?.history)).slice(-HISTORY_LIMIT);
 
     // Вчерашний разговор не подхватываем: Obsidian открывается с чистой лентой.
     // Что стоило сохранить — уходит в заметку кнопкой в шапке панели.
@@ -218,13 +261,9 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   }
 
   async saveSettings(): Promise<void> {
-    await this.saveData(this.storable());
+    await this.saveData({ settings: this.settings });
     this.registerActionCommands();
     this.chatView?.refreshHeader();
-  }
-
-  private storable(): StoredData {
-    return { settings: this.settings, history: this.history.slice(-HISTORY_LIMIT) };
   }
 
   /** История меняется часто — пишем на диск не чаще раза в секунду. */
@@ -232,7 +271,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     if (this.saveTimer !== null) window.clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(() => {
       this.saveTimer = null;
-      void this.saveData(this.storable());
+      void this.writeHistory(this.history.slice(-HISTORY_LIMIT));
     }, 1000);
   }
 
@@ -509,7 +548,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   }
 
   /** Возврат правки: меняем написанное обратно, если его ещё не тронули. */
-  undoAction(id: string): boolean {
+  async undoAction(id: string): Promise<boolean> {
     const record = this.undoable.get(id);
     if (!record) return false;
 
@@ -517,7 +556,10 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       .getLeavesOfType("markdown")
       .map((leaf) => leaf.view as MarkdownView)
       .find((v) => v.file?.path === record.path);
-    if (!view) return false;
+
+    // Заметку могли закрыть — тогда правим файл. Открытую правим через редактор:
+    // так уцелеет несохранённое и сработает обычный Ctrl+Z.
+    if (!view) return this.undoInFile(record, id);
 
     const editor = view.editor;
     const to = editor.offsetToPos(editor.posToOffset(record.from) + record.written.length);
@@ -528,6 +570,29 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     this.undoable.delete(id);
     this.app.workspace.setActiveLeaf(view.leaf, { focus: true });
     return true;
+  }
+
+  /** Тот же возврат, но в закрытой заметке — по координатам в сыром тексте. */
+  private async undoInFile(record: UndoRecord, id: string): Promise<boolean> {
+    const file = this.app.vault.getAbstractFileByPath(record.path);
+    if (!(file instanceof TFile)) return false;
+
+    let done = false;
+    try {
+      await this.app.vault.process(file, (text) => {
+        const at = offsetAt(text, record.from.line, record.from.ch);
+        if (at === null) return text;
+        // Ровно та же проверка, что и в открытой заметке: возвращаем, только
+        // если на месте правки лежит в точности написанное нами.
+        if (text.slice(at, at + record.written.length) !== record.written) return text;
+        done = true;
+        return text.slice(0, at) + record.original + text.slice(at + record.written.length);
+      });
+    } catch {
+      return false;
+    }
+    if (done) this.undoable.delete(id);
+    return done;
   }
 
   stopAction(): void {
@@ -609,7 +674,12 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       setIcon(this.statusEl.createSpan({ cls: "ai-status-icon" }), "circle-stop");
       this.statusEl.createSpan({ text: chars > 0 ? `${text} ${chars}` : text });
     } else if (!this.mobileNotice) {
-      this.mobileNotice = new Notice(text, 0);
+      // На телефоне статус-бара нет, и до этой минуты правку нечем было
+      // остановить: уведомление висело до конца запроса, а команда «Остановить»
+      // ищется в палитре дольше, чем длится сама правка.
+      this.mobileNotice = new Notice(`${text}\n${t("busyStopTap")}`, 0);
+      this.mobileNotice.noticeEl.addClass("ai-busy-notice");
+      this.mobileNotice.noticeEl.onclick = () => this.stopAll();
     }
   }
 
@@ -653,16 +723,13 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     return recent?.view instanceof MarkdownView ? recent.view : null;
   }
 
-  noteContext(): { path: string; text: string } | null {
+  noteContext(): { path: string; text: string; clipped: boolean } | null {
     if (!this.settings.chatContextNote) return null;
     const view = this.centralNote();
     if (!view?.file) return null;
     const text = view.editor.getValue();
     if (!hasText(text)) return null;
-    return {
-      path: view.file.path,
-      text: text.length > CONTEXT_LIMIT ? text.slice(0, CONTEXT_LIMIT) + "\n…" : text,
-    };
+    return { path: view.file.path, ...clip(text) };
   }
 
   insertIntoEditor(text: string): boolean {
@@ -689,14 +756,10 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     return view?.file?.path === path ? view : null;
   }
 
-  readNote(): { path: string; text: string } | null {
+  readNote(): { path: string; text: string; clipped: boolean } | null {
     const view = this.centralNote();
     if (!view?.file) return null;
-    const text = view.editor.getValue();
-    return {
-      path: view.file.path,
-      text: text.length > CONTEXT_LIMIT ? text.slice(0, CONTEXT_LIMIT) + "\n…" : text,
-    };
+    return { path: view.file.path, ...clip(view.editor.getValue()) };
   }
 
   noteText(path: string): string | null {

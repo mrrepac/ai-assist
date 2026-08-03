@@ -1,20 +1,15 @@
 import { App, Modal, Platform, setIcon } from "obsidian";
 import { t } from "./i18n";
+import { QUICK_SLOT_COUNT } from "./types";
 
-/** Пять пресетов, выбираемых цифрой. */
-export const QUICK_KEYS = ["1", "2", "3", "4", "5"];
+/** Цифры, которыми выбирается пресет, — по одной на слот. */
+export const QUICK_KEYS = Array.from({ length: QUICK_SLOT_COUNT }, (_, i) => String(i + 1));
 
 /**
  * Ловим физическую клавишу, а не символ: так меню работает и на русской
  * раскладке, и с цифрового блока.
  */
-const QUICK_CODES = [
-  ["Digit1", "Numpad1"],
-  ["Digit2", "Numpad2"],
-  ["Digit3", "Numpad3"],
-  ["Digit4", "Numpad4"],
-  ["Digit5", "Numpad5"],
-];
+const QUICK_CODES = QUICK_KEYS.map((key) => [`Digit${key}`, `Numpad${key}`]);
 
 /** Сколько своих промптов помним для листания стрелками. */
 export const RECENT_LIMIT = 10;

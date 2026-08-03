@@ -40,7 +40,7 @@ export interface AiAssistSettings {
   toolsConfirm: boolean;
   actions: AiAction[];
   /**
-   * Что лежит на цифрах быстрого меню (1…5): id действия,
+   * Что лежит на цифрах быстрого меню (1…9): id действия,
    * спецпункт (@ask, @translate-to) или пустая строка.
    */
   quickSlots: string[];
@@ -59,10 +59,19 @@ export interface AiAssistSettings {
 /** Спецпункт быстрого меню — не действие, а отдельная команда плагина. */
 export const QUICK_ASK = "@ask";
 
+/**
+ * Сколько цифр разбирает быстрое меню. Девять, а не пять: слот — единственное
+ * место, где действие видно и правится, и всё, что в слоты не поместилось,
+ * пропадало из настроек совсем.
+ */
+export const QUICK_SLOT_COUNT = 9;
+
 export interface StoredChatMessage {
   role: "user" | "assistant";
   content: string;
   reasoning?: string;
+  /** Расход на этот ответ: иначе после перезагрузки панели счёт пропадал. */
+  usage?: { prompt: number; completion: number; cached: number };
 }
 
 /**
@@ -92,10 +101,14 @@ export function isActionEntry(item: HistoryItem): item is ActionEntry {
   return (item as ActionEntry).kind === "action";
 }
 
-/** Всё, что лежит в data.json: настройки и история чата отдельно. */
+/**
+ * Что лежит в data.json. Лента переехала в свой history.json — она меняется на
+ * каждое слово, а data.json переписывается целиком вместе с настройками. Поле
+ * history осталось лишь для настроек прежних версий: прочитали — и перенесли.
+ */
 export interface StoredData {
   settings: AiAssistSettings;
-  history: HistoryItem[];
+  history?: HistoryItem[];
 }
 
 export const DEEPSEEK_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro"];
@@ -125,11 +138,6 @@ export const PROVIDER_ORDER = Object.keys(PROVIDERS);
 export function providerRank(name: string): number {
   const i = PROVIDER_ORDER.indexOf(name);
   return i === -1 ? PROVIDER_ORDER.length : i;
-}
-
-/** Умеет ли выбранный провайдер инструменты правки заметок. */
-export function toolsAvailable(settings: AiAssistSettings): boolean {
-  return settings.tools;
 }
 
 /**
@@ -187,7 +195,17 @@ export function defaultSettings(): AiAssistSettings {
     tools: true,
     toolsConfirm: true,
     actions: defaultActions(),
-    quickSlots: ["spelling", "expand", "clarify", "shorten", "evaluate"],
+    quickSlots: [
+      "spelling",
+      "expand",
+      "clarify",
+      "shorten",
+      "evaluate",
+      "transcript",
+      QUICK_ASK,
+      "",
+      "",
+    ],
     recentPrompts: [],
     freshStart: true,
     defaultHotkey: false,
@@ -274,15 +292,21 @@ export function mergeSettings(raw: unknown): AiAssistSettings {
     merged.noSelection = old === false ? "none" : base.noSelection;
   }
 
-  // Слотов ровно пять, и в них не должно остаться ссылок на удалённые действия.
-  // Набор, доставшийся от прошлой версии, заменяем новым: иначе обновлённые
-  // заготовки увидят только те, кто ставит плагин впервые.
+  // Слотов ровно QUICK_SLOT_COUNT, и в них не должно остаться ссылок на
+  // удалённые действия. Набор, доставшийся от прошлой версии, заменяем новым:
+  // иначе обновлённые заготовки увидят только те, кто ставит плагин впервые.
   const storedSlots = Array.isArray(s.quickSlots) ? s.quickSlots : base.quickSlots;
   const slots = isLegacySlots(storedSlots) ? base.quickSlots : storedSlots;
-  merged.quickSlots = Array.from({ length: 5 }, (_, i) => {
-    // Пустая строка — осознанно очищенный слот, undefined — настройки из
-    // версии, где слотов было меньше: там уместнее умолчание, а не дырка.
-    const id = typeof slots[i] === "string" ? slots[i] : base.quickSlots[i];
+  // Пустая строка — осознанно очищенный слот, undefined — настройки из версии,
+  // где слотов было меньше: такому слоту уместнее умолчание, а не дырка.
+  const chosen = Array.from({ length: QUICK_SLOT_COUNT }, (_, i) =>
+    typeof slots[i] === "string" ? slots[i] : null,
+  );
+  // Но кладём только то, чего в наборе ещё нет: ряд стал длиннее, и без этой
+  // проверки после обновления одно действие оказалось бы на двух клавишах.
+  const spare = base.quickSlots.filter((id) => id && !chosen.includes(id));
+  merged.quickSlots = chosen.map((slot) => {
+    const id = slot ?? spare.shift() ?? "";
     if (id === QUICK_ASK) return id;
     return merged.actions.some((a) => a.id === id) ? id : "";
   });

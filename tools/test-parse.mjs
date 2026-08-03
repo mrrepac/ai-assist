@@ -38,8 +38,9 @@ async function load(entry, name) {
 }
 
 const { drainSse, endpoint, collectToolCalls, isLocalUrl } = await load("src/api.ts", "api");
-const { cleanReply } = await load("src/actions.ts", "actions");
-const { mergeSettings, providerOf, streamAvailable, toolsAvailable, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank } = await load("src/types.ts", "types");
+const { cleanReply, offsetAt } = await load("src/actions.ts", "actions");
+const { contextWindow } = await load("src/history.ts", "history");
+const { mergeSettings, providerOf, streamAvailable, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank } = await load("src/types.ts", "types");
 const { chatToMarkdown } = await load("src/chatnote.ts", "chatnote");
 const { parseCall, runCall } = await load("src/tools.ts", "tools");
 const { diffWords } = await load("src/diff.ts", "diff");
@@ -245,9 +246,9 @@ check("новой заметке цель не нужна", parseCall({ id: "1",
 check("неизвестному инструменту цель не нужна", parseCall({ id: "1", name: "rm_rf", arguments: "{}" }, HERE).path, null);
 check("без открытой заметки цели нет", parseCall({ id: "1", name: "insert_text", arguments: "{}" }, null).path, null);
 
-const hostAt = (path, noteBody = "текст") => ({
+const hostAt = (path, noteBody = "текст", clipped = false) => ({
   targetPath: () => path,
-  readNote: () => (path ? { path, text: noteBody } : null),
+  readNote: () => (path ? { path, text: noteBody, clipped } : null),
   noteText: (want) => (want === path ? noteBody : null),
   insertText: (_text, want) => want === path,
   replaceNote: (_text, want) => want === path,
@@ -293,9 +294,55 @@ check("переписывание заметки — тоже правка", par
 check("заметка переписывается целиком", (await write("replace_note", { text: "новый текст" }, HERE, HERE)).startsWith("Rewrote"), true);
 check("ушли из заметки — переписывания нет", (await write("replace_note", { text: "х" }, HERE, "Другая.md")).startsWith("Failed"), true);
 
+// ——— чтение обрезанной заметки ———
+// Начало длинной заметки модель иначе примет за весь текст и перепишет её по
+// половине — про обрезку ей надо сказать прямо.
+const readWith = (clipped) =>
+  runCall(hostAt(HERE, "текст", clipped), parseCall({ id: "1", name: "read_note", arguments: "{}" }, HERE));
+check("обрезка заметки видна модели", (await readWith(true)).includes("only the beginning"), true);
+check("целая заметка отдаётся без оговорок", (await readWith(false)).includes("only the beginning"), false);
+
+// ——— что уходит в контекст ———
+// Мерить контекст штуками сообщений нельзя: двадцать реплик бывают и на строчку,
+// и на страницу, а платят за символы.
+const said = (n, size = 10) =>
+  Array.from({ length: n }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: "я".repeat(size) }));
+check("короткий разговор уходит целиком", contextWindow(said(6)).length, 6);
+check("в бюджет влезает столько, сколько влезает", contextWindow(said(10, 100), 250).length, 2);
+check("берётся хвост разговора, а не начало", contextWindow([...said(2), { role: "user", content: "последнее" }], 20).at(-1).content, "последнее");
+check("порядок реплик не переворачивается", contextWindow(said(4)).map((m) => m.role), ["user", "assistant", "user", "assistant"]);
+check("одна огромная реплика всё равно берётся", contextWindow([{ role: "user", content: "я".repeat(500) }], 100).length, 1);
+check("предел на число реплик работает", contextWindow(said(50, 1), 100000, 10).length, 10);
+check(
+  "записи журнала в запрос не уходят",
+  contextWindow([{ kind: "action", id: "1", action: "Правка", status: "done", content: "х" }, ...said(2)]).length,
+  2,
+);
+check("пустая лента — пустой контекст", contextWindow([]).length, 0);
+
+// ——— координаты правки в закрытой заметке ———
+// Редактора нет, а вернуть текст надо ровно на то место, где он был.
+const LINES = "первая\nвторая\nтретья";
+check("начало текста", offsetAt(LINES, 0, 0), 0);
+check("вторая строка", offsetAt(LINES, 1, 0), 7);
+check("середина строки", offsetAt(LINES, 2, 3), 17);
+check("конец строки", offsetAt(LINES, 0, 6), 6);
+check("строки за концом текста нет", offsetAt(LINES, 9, 0), null);
+check("колонки за концом строки нет", offsetAt(LINES, 0, 99), null);
+
 // ——— слоты быстрого меню ———
-const FRESH_SLOTS = ["spelling", "expand", "clarify", "shorten", "evaluate"];
-check("слотов всегда пять", mergeSettings({ quickSlots: ["spelling"] }).quickSlots.length, 5);
+const FRESH_SLOTS = [
+  "spelling",
+  "expand",
+  "clarify",
+  "shorten",
+  "evaluate",
+  "transcript",
+  "@ask",
+  "",
+  "",
+];
+check("слотов всегда девять", mergeSettings({ quickSlots: ["spelling"] }).quickSlots.length, 9);
 check("слоты по умолчанию", mergeSettings(null).quickSlots, FRESH_SLOTS);
 check(
   "набор из прошлой версии заменяется новым",
@@ -325,9 +372,22 @@ check(
   FRESH_SLOTS,
 );
 check(
-  "переложенный вручную набор не трогают",
+  "набор 0.1.x заменяется новым",
+  mergeSettings({ quickSlots: ["spelling", "expand", "clarify", "shorten", "evaluate"] }).quickSlots,
+  FRESH_SLOTS,
+);
+// Ряд стал длиннее: разложенное вручную остаётся на своих клавишах, а новые
+// слоты добираются умолчаниями — теми, что в набор ещё не попали.
+check(
+  "переложенный вручную набор не переставляют",
   mergeSettings({ quickSlots: ["transcript", "spelling", "@ask", "", ""] }).quickSlots,
-  ["transcript", "spelling", "@ask", "", ""],
+  ["transcript", "spelling", "@ask", "", "", "expand", "clarify", "shorten", "evaluate"],
+);
+check(
+  "при удлинении ряда действие не задваивается",
+  mergeSettings({ quickSlots: ["transcript", "spelling", "@ask", "", ""] })
+    .quickSlots.filter((id) => id === "spelling").length,
+  1,
 );
 check(
   "осознанно пустой слот остаётся пустым",
@@ -421,7 +481,6 @@ check("chadgpt узнаётся по адресу", providerOf({ baseUrl: "https
 check("поток у ChadGPT выключен", streamAvailable({ baseUrl: "https://ask.chadgpt.ru/api/v1" }), false);
 check("поток у DeepSeek доступен", streamAvailable({ baseUrl: "https://api.deepseek.com" }), true);
 check("поток у Polza доступен", streamAvailable({ baseUrl: "https://api.polza.ai/api/v1" }), true);
-check("инструменты больше не зависят от провайдера", toolsAvailable({ tools: true, baseUrl: "https://ask.chadgpt.ru/api/v1" }), true);
 check("gptunnel узнаётся по адресу", providerOf({ baseUrl: "https://gptunnel.ru/v1" }), "gptunnel");
 check("поток у GPTunnel доступен", streamAvailable({ baseUrl: "https://gptunnel.ru/v1" }), true);
 check("чужой адрес — свой провайдер", providerOf({ baseUrl: "https://openrouter.ai/api/v1" }), "custom");
@@ -475,7 +534,7 @@ check(
   }).quickSlots[0],
   "custom-9",
 );
-check("мусор вместо массива → умолчания", mergeSettings({ quickSlots: "ой" }).quickSlots.length, 5);
+check("мусор вместо массива → умолчания", mergeSettings({ quickSlots: "ой" }).quickSlots.length, 9);
 
 // ——— свои промпты ———
 check("промпты по умолчанию пусты", mergeSettings(null).recentPrompts, []);

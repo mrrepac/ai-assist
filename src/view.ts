@@ -10,6 +10,7 @@ import {
 } from "obsidian";
 import { ApiConfig, ApiError, ChatMessage, Usage, chat, listModels } from "./api";
 import { DiffResult, diffWords } from "./diff";
+import { contextWindow } from "./history";
 import { t } from "./i18n";
 import { ModelSuggestModal } from "./modals";
 import { ParsedCall, ToolHost, parseCall, runCall, toolSpecs } from "./tools";
@@ -23,11 +24,13 @@ import {
   providerRank,
   streamAvailable,
   switchProvider,
-  toolsAvailable,
 } from "./types";
 
 /** Сколько раз подряд модель может ходить за инструментами в одном запросе. */
 const MAX_TOOL_STEPS = 5;
+
+/** Приписка модели к обрезанной заметке — по-английски, как и весь служебный текст. */
+const CLIPPED = "[The note is longer than this — only the beginning is shown.]";
 
 export const VIEW_TYPE_CHAT = "ai-assist-chat";
 
@@ -45,11 +48,11 @@ export interface ChatHost extends ToolHost {
   /** Сложить разговор в новую заметку и открыть её. */
   saveChat(): Promise<void>;
   /** Вернуть заметку к тому, что было до правки. false — уже не получится. */
-  undoAction(id: string): boolean;
+  undoAction(id: string): Promise<boolean>;
   /** Прервать идущую правку выделенного. */
   stopAction(): void;
-  /** Текст активной заметки, если контекст включён. */
-  noteContext(): { path: string; text: string } | null;
+  /** Текст активной заметки, если контекст включён; clipped — отдано началом. */
+  noteContext(): { path: string; text: string; clipped: boolean } | null;
   /** Вставить текст в открытую заметку; false — вставлять некуда. */
   insertIntoEditor(text: string): boolean;
 }
@@ -271,10 +274,23 @@ export class ChatView extends ItemView {
 
   newChat(): void {
     this.stop();
+    if (this.host.history.length === 0) return;
+
+    // Спрашивать перед очисткой — лишний клик на каждый новый разговор, поэтому
+    // чистим сразу, но держим копию: нажатие по уведомлению возвращает ленту.
+    const kept = this.host.history.slice();
     this.host.history.length = 0;
     this.host.persistHistory();
     this.repaint();
-    new Notice(t("chatCleared"));
+
+    const notice = new Notice(`${t("chatCleared")}\n${t("chatUndoClear")}`, 8000);
+    notice.noticeEl.addClass("ai-undo-notice");
+    notice.noticeEl.onclick = () => {
+      this.host.history.push(...kept);
+      this.host.persistHistory();
+      this.repaint();
+      notice.hide();
+    };
   }
 
   stop(): void {
@@ -312,14 +328,19 @@ export class ChatView extends ItemView {
   async submit(text: string, opts: SubmitOptions = {}): Promise<void> {
     if (this.busy) this.stop();
 
+    // С какого места история принадлежит этому заходу: по нему кнопка «Ещё раз»
+    // отматывает всё сказанное, включая круги инструментов.
+    const startAt = this.host.history.length;
     this.host.history.push({ role: "user", content: opts.display ?? text });
     const userEl = this.addMessage("user", opts.display ?? text);
     userEl.scrollIntoView({ block: "end" });
 
     const messages: ChatMessage[] = [];
     // Без объяснения, где она находится, модель на просьбу «вставь в заметку»
-    // отвечает лекцией о том, что у неё нет доступа к хранилищу.
-    const canUseTools = toolsAvailable(this.host.settings);
+    // отвечает лекцией о том, что у неё нет доступа к хранилищу. Умеет ли модель
+    // инструменты, заранее не знает никто — это выясняется отказом провайдера,
+    // и на такой отказ ApiError отвечает подсказкой.
+    const canUseTools = this.host.settings.tools;
     const hint = canUseTools ? t("chatSystemHintTools") : t("chatSystemHint");
     const system = [hint, this.host.settings.systemPrompt.trim(), opts.system?.trim()]
       .filter(Boolean)
@@ -330,15 +351,19 @@ export class ChatView extends ItemView {
     if (note) {
       messages.push({
         role: "system",
-        content: `Note "${note.path}":\n\n${note.text}`,
+        content: `Note "${note.path}":\n\n${note.text}` + (note.clipped ? "\n\n" + CLIPPED : ""),
       });
+      // Ответ по началу длинной заметки выглядит точно так же, как ответ по всей,
+      // — про обрезку надо сказать вслух, иначе о ней никто не узнает.
+      if (note.clipped) {
+        this.listEl.createDiv({ cls: "ai-notice", text: t("chatContextClipped") });
+      }
     }
 
     if (!opts.fresh) {
       // История без последней реплики — её кладём отдельно, уже настоящим текстом.
-      // Записи журнала пропускаем: модели незачем читать отчёт о своей работе.
-      for (const m of this.host.history.slice(0, -1).slice(-20)) {
-        if (!isActionEntry(m)) messages.push({ role: m.role, content: m.content });
+      for (const m of contextWindow(this.host.history.slice(0, -1))) {
+        messages.push({ role: m.role, content: m.content });
       }
     }
     messages.push({ role: "user", content: text });
@@ -353,6 +378,8 @@ export class ChatView extends ItemView {
     let body = bubble.querySelector(".ai-msg-body") as HTMLElement;
     let answer = "";
     let reasoning = "";
+    /** Круги кончились, а модель всё ещё правила — работа осталась недоделанной. */
+    let unfinished = false;
 
     try {
       // Модель может ответить не текстом, а просьбой вызвать инструмент —
@@ -398,7 +425,12 @@ export class ChatView extends ItemView {
         body.removeClass("ai-streaming");
 
         if (answer.trim()) {
-          this.host.history.push({ role: "assistant", content: answer, reasoning });
+          this.host.history.push({
+            role: "assistant",
+            content: answer,
+            reasoning,
+            usage: result.usage ?? undefined,
+          });
           await this.renderMarkdown(answer, body);
           this.addFooter(bubble, answer, result.usage);
         } else if (result.toolCalls.length === 0) {
@@ -426,6 +458,17 @@ export class ChatView extends ItemView {
           messages.push({ role: "tool", tool_call_id: call.id, content: outcome });
         }
         if (controller.signal.aborted) break;
+        // Следующего круга не будет: правки применены, а сказать «готово» модели
+        // уже негде — без объяснения это выглядит как оборвавшийся на полуслове
+        // разговор.
+        unfinished = step === MAX_TOOL_STEPS - 1;
+      }
+      if (unfinished) {
+        this.listEl.createDiv({
+          cls: "ai-notice",
+          text: t("chatToolLimit", { steps: MAX_TOOL_STEPS }),
+        });
+        this.followBottom();
       }
       this.host.persistHistory();
     } catch (e) {
@@ -447,8 +490,15 @@ export class ChatView extends ItemView {
         body.setText(err.message);
         const retry = body.createEl("button", { cls: "ai-retry", text: t("chatRetry") });
         retry.onclick = () => {
-          bubble.remove();
-          this.host.history.pop(); // убираем реплику пользователя, submit положит заново
+          // Ошибка могла случиться и на втором круге инструментов — тогда сверху
+          // лежит не вопрос, а ответ или след правки. Снимаем весь заход целиком
+          // и перерисовываем ленту, чтобы она сошлась с историей.
+          const tail = this.host.history.splice(startAt);
+          // Правка выделенного могла идти своим чередом — к этому запросу она
+          // отношения не имеет, и её запись остаётся в ленте.
+          this.host.history.push(...tail.filter(isActionEntry));
+          this.host.persistHistory();
+          this.repaint();
           void this.submit(text, opts);
         };
       }
@@ -589,7 +639,7 @@ export class ChatView extends ItemView {
           (block.querySelector(".ai-think-body") as HTMLElement).setText(m.reasoning);
         }
         void this.renderMarkdown(m.content, body);
-        this.addFooter(el, m.content, null);
+        this.addFooter(el, m.content, m.usage ?? null);
       } else {
         body.setText(m.content);
       }
@@ -647,8 +697,8 @@ export class ChatView extends ItemView {
     const foot = card.createDiv({ cls: "ai-log-foot" });
     if (entry.status === "done" && !entry.undone) {
       const undo = foot.createEl("button", { cls: "ai-log-undo", text: t("logUndo") });
-      undo.onclick = () => {
-        if (this.host.undoAction(entry.id)) {
+      undo.onclick = async () => {
+        if (await this.host.undoAction(entry.id)) {
           entry.undone = true;
           this.host.persistHistory();
           this.renderAction(entry);
