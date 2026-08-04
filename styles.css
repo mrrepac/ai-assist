@@ -168,6 +168,26 @@
   margin-top: var(--size-2-2);
 }
 
+/*
+ * Кнопки под своим вопросом: «переписать» и «убрать». Нужны они изредка, а
+ * висят под каждой репликой, поэтому проявляются под курсором — и остаются
+ * видимыми, пока на них фокус с клавиатуры.
+ */
+.ai-assist-chat .ai-msg-foot-ask {
+  opacity: 0;
+  transition: opacity 100ms ease-in-out;
+}
+
+.ai-assist-chat .ai-msg-user:hover .ai-msg-foot-ask,
+.ai-assist-chat .ai-msg-foot-ask:focus-within {
+  opacity: 1;
+}
+
+/* На телефоне наводить нечем — там кнопки видны всегда. */
+.is-mobile .ai-assist-chat .ai-msg-foot-ask {
+  opacity: 1;
+}
+
 .ai-assist-chat .ai-msg-insert {
   display: flex;
   align-items: center;
@@ -188,6 +208,20 @@
 
 .ai-assist-chat .ai-msg-usage {
   margin-left: auto;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
+/*
+ * Имя модели под ответом. Тоже прижато вправо: если расход показывается, они
+ * встают парой в конце строки, а первый auto забирает всё свободное место.
+ */
+.ai-assist-chat .ai-msg-model {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: var(--font-ui-smaller);
   color: var(--text-faint);
 }
@@ -464,6 +498,45 @@
 
 .ai-quick-modal {
   width: min(34em, 92vw);
+}
+
+/*
+ * Ряд кнопок «сколько брать»: виден, только когда выделения не было и кусок
+ * плагин взял сам. Размер на кнопке — чтобы цену видеть до нажатия.
+ */
+.ai-quick-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-2-2);
+  margin-bottom: var(--size-4-2);
+}
+
+.ai-quick-scope {
+  display: flex;
+  align-items: baseline;
+  gap: var(--size-2-2);
+  padding: var(--size-2-1) var(--size-4-2);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  box-shadow: none;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ai-quick-scope:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ai-quick-scope.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.ai-quick-scope-size {
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
 }
 
 .ai-quick-selection {

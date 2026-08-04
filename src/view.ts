@@ -13,11 +13,13 @@ import { DiffResult, diffWords } from "./diff";
 import { contextWindow, messageText } from "./history";
 import { t } from "./i18n";
 import { ModelSuggestModal } from "./modals";
+import { RECENT_LIMIT } from "./quickmenu";
 import { ParsedCall, ToolHost, parseCall, runCall, toolSpecs } from "./tools";
 import {
   ActionEntry,
   AiAssistSettings,
   HistoryItem,
+  StoredChatMessage,
   isActionEntry,
   providerLabel,
   providerOf,
@@ -32,6 +34,11 @@ const MAX_TOOL_STEPS = 5;
 /** Приписка модели к обрезанной заметке — по-английски, как и весь служебный текст. */
 const CLIPPED = "[The note is longer than this — only the beginning is shown.]";
 
+/** Реплика пользователя: не ответ модели и не запись журнала правок. */
+function isAsk(item: HistoryItem): boolean {
+  return !isActionEntry(item) && item.role === "user";
+}
+
 export const VIEW_TYPE_CHAT = "ai-assist-chat";
 
 /** То, что панели нужно от плагина, — чтобы не тянуть main.ts кольцом импортов. */
@@ -43,12 +50,16 @@ export interface ChatHost extends ToolHost {
   persistHistory(): void;
   /** Записать настройки: панель меняет модель и провайдера прямо из шапки. */
   saveSettings(): Promise<void>;
+  /** То же, но отложенно: черновик вопроса меняется на каждую букву. */
+  saveSettingsSoon(): void;
   /** Весь разговор в markdown — для копирования и для сохранения в заметку. */
   chatMarkdown(): string;
   /** Сложить разговор в новую заметку и открыть её. */
   saveChat(): Promise<void>;
   /** Вернуть заметку к тому, что было до правки. false — уже не получится. */
   undoAction(id: string): Promise<boolean>;
+  /** Вернуть текст и прогнать по нему то же действие ещё раз. */
+  repeatAction(id: string): Promise<void>;
   /** Прервать идущую правку выделенного. */
   stopAction(): void;
   /** Текст активной заметки, если контекст включён; clipped — отдано началом. */
@@ -66,8 +77,19 @@ export interface SubmitOptions {
   system?: string;
   /** Не тащить в запрос предыдущие сообщения: действие само по себе. */
   fresh?: boolean;
-  /** Фрагмент заметки, о котором вопрос. По умолчанию — прикреплённое выделение. */
-  quote?: string;
+  /**
+   * Запрос пришёл из заметки, а не из панели: действие над выделенным. Такой
+   * сам себе контекст — на что показали, с тем и работаем. Поэтому ни
+   * инструментов правки (режим «показать в панели» уже сказал «не трогай
+   * заметку»), ни текущей заметки в довесок к выделенному куску.
+   */
+  fromEditor?: boolean;
+  /**
+   * Фрагмент заметки, о котором вопрос. Не передан — берётся прикреплённое
+   * выделение; null — вопрос идёт без фрагмента, чем бы ни была занята плашка.
+   * Так повторный запрос уходит ровно тем же, каким был.
+   */
+  quote?: string | null;
 }
 
 export class ChatView extends ItemView {
@@ -83,6 +105,8 @@ export class ChatView extends ItemView {
   private attached: { path: string; text: string } | null = null;
   /** Снятый крестиком фрагмент: пока выделение то же, обратно не подхватываем. */
   private dismissed: string | null = null;
+  /** Где стоим, листая прошлые вопросы стрелками; -1 — не листаем. */
+  private askIndex = -1;
 
   constructor(leaf: WorkspaceLeaf, private host: ChatHost) {
     super(leaf);
@@ -177,14 +201,24 @@ export class ChatView extends ItemView {
       cls: "ai-input",
       attr: { rows: "2", placeholder: t("chatPlaceholder") },
     });
+    // Недописанный вопрос переживает и закрытие панели, и перезапуск Obsidian:
+    // мысль, которую печатали, дороже поля, которое её потеряло.
+    this.inputEl.value = this.host.settings.draft;
     this.inputEl.addEventListener("keydown", (e) => {
       // На телефоне Enter — это перенос строки, отправка только кнопкой.
       if (e.key === "Enter" && !e.shiftKey && !Platform.isMobile) {
         e.preventDefault();
         void this.send();
+        return;
+      }
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        if (this.walkAsks(e.key === "ArrowUp" ? 1 : -1)) e.preventDefault();
       }
     });
-    this.inputEl.addEventListener("input", () => this.autoGrow());
+    this.inputEl.addEventListener("input", () => {
+      this.autoGrow();
+      this.saveDraft();
+    });
 
     this.sendBtn = foot.createEl("button", { cls: "ai-send mod-cta" });
     this.paintSendButton();
@@ -193,6 +227,9 @@ export class ChatView extends ItemView {
       else void this.send();
     };
 
+    // Восстановленный черновик может быть в несколько строк — поле подгоняем
+    // под него сразу, а не при первой букве.
+    this.autoGrow();
     this.repaint();
   }
 
@@ -300,19 +337,133 @@ export class ChatView extends ItemView {
 
     // Спрашивать перед очисткой — лишний клик на каждый новый разговор, поэтому
     // чистим сразу, но держим копию: нажатие по уведомлению возвращает ленту.
-    const kept = this.host.history.slice();
+    const undo = this.snapshot();
     this.host.history.length = 0;
     this.host.persistHistory();
     this.repaint();
+    undo(t("chatCleared"));
+  }
 
-    const notice = new Notice(`${t("chatCleared")}\n${t("chatUndoClear")}`, 8000);
-    notice.noticeEl.addClass("ai-undo-notice");
-    notice.noticeEl.onclick = () => {
-      this.host.history.push(...kept);
-      this.host.persistHistory();
-      this.repaint();
-      notice.hide();
+  // ——————————————————————— правка ленты ———————————————————————
+
+  /**
+   * Снимок ленты: вернуть её можно нажатием по уведомлению. Кнопки под
+   * сообщениями снимают уже написанное, и без возврата каждая из них была бы
+   * кнопкой «потерять разговор».
+   */
+  private snapshot(): (label: string) => void {
+    const kept = this.host.history.slice();
+    return (label) => {
+      const notice = new Notice(`${label}\n${t("chatUndoClear")}`, 8000);
+      notice.noticeEl.addClass("ai-undo-notice");
+      notice.noticeEl.onclick = () => {
+        this.host.history.length = 0;
+        this.host.history.push(...kept);
+        this.host.persistHistory();
+        this.repaint();
+        notice.hide();
+      };
     };
+  }
+
+  /**
+   * Убрать кусок ленты. Записи журнала правок остаются на месте: это отчёт о
+   * работе над заметкой, а не часть разговора, и к снятому вопросу они
+   * отношения не имеют.
+   */
+  private cut(from: number, to: number): void {
+    const removed = this.host.history.splice(from, to - from);
+    this.host.history.splice(from, 0, ...removed.filter(isActionEntry));
+    this.host.persistHistory();
+    this.repaint();
+  }
+
+  /** Последняя реплика разговора; записи журнала не в счёт. */
+  private lastChat(): StoredChatMessage | null {
+    for (let i = this.host.history.length - 1; i >= 0; i--) {
+      const item = this.host.history[i];
+      if (!isActionEntry(item)) return item;
+    }
+    return null;
+  }
+
+  /**
+   * Спросить заново: ответ снимается вместе с вопросом, и вопрос уходит тем же,
+   * каким был, — вплоть до системного промпта действия, если он был.
+   */
+  private async regenerate(msg: StoredChatMessage): Promise<void> {
+    const history = this.host.history;
+    const from = history.indexOf(msg);
+    if (from === -1) return;
+    // Ниже мог появиться новый разговор: снимать его ради одного ответа — не
+    // то, чего ждут от кнопки.
+    if (this.lastChat() !== msg) {
+      new Notice(t("chatAgainLast"));
+      return;
+    }
+    // Вопрос ищем выше ответа: между ними могли встать записи журнала правок,
+    // да и сам ответ мог прийти вторым кругом инструментов.
+    let at = from - 1;
+    while (at >= 0 && !isAsk(history[at])) at--;
+    if (at < 0) {
+      new Notice(t("chatNoQuestion"));
+      return;
+    }
+
+    const ask = history[at] as StoredChatMessage;
+    this.cut(at, history.length);
+    await this.submit(ask.resend?.text ?? ask.content, {
+      display: ask.resend ? ask.content : undefined,
+      system: ask.resend?.system,
+      fresh: ask.resend?.fresh,
+      // Запрос из действия — значит и повтор его идёт по тем же правилам.
+      fromEditor: !!ask.resend,
+      // Ровно тот фрагмент, о котором спрашивали: подхватывать вместо него то,
+      // что выделено в заметке сейчас, — это уже другой вопрос.
+      quote: ask.quote ?? null,
+    });
+  }
+
+  /** Вопрос возвращается в поле ввода, а разговор — к тому месту, где он был. */
+  private editAsk(msg: StoredChatMessage): void {
+    const at = this.host.history.indexOf(msg);
+    if (at === -1) return;
+    this.stop();
+
+    const undo = this.snapshot();
+    // Сколько разговора уйдёт следом за вопросом. Записи журнала правок не в
+    // счёт — они остаются в ленте.
+    const tail = this.host.history.slice(at + 1).filter((item) => !isActionEntry(item)).length;
+    this.cut(at, this.host.history.length);
+
+    this.setInput(msg.resend?.text ?? msg.content);
+    this.inputEl.focus();
+    // Фрагмент, о котором был вопрос, возвращается на плашку вместе с ним.
+    if (msg.quote) this.takeSelection(msg.quote);
+    // Снялся не только сам вопрос: дальше мог быть разговор на десять реплик,
+    // и молча его терять нельзя.
+    if (tail > 0) undo(t("chatCutTail"));
+  }
+
+  /** Убрать реплику из разговора. Вопрос уходит вместе с ответами на него. */
+  private dropMessage(msg: StoredChatMessage): void {
+    const history = this.host.history;
+    const at = history.indexOf(msg);
+    if (at === -1) return;
+
+    // Идущий ответ пишется в свой пузырь, а перерисованная лента этот пузырь
+    // выбросит — оборвать запрос честнее, чем писать в никуда.
+    this.stop();
+
+    let end = at + 1;
+    // Ответ без вопроса в ленте повисает, а в следующий запрос уезжает
+    // разговором с дырой посередине.
+    if (msg.role === "user") {
+      while (end < history.length && !isAsk(history[end])) end++;
+    }
+    const undo = this.snapshot();
+    this.cut(at, end);
+    undo(t("chatDropped"));
   }
 
   stop(): void {
@@ -384,6 +535,46 @@ export class ChatView extends ItemView {
     this.inputEl.setCssStyles({ height: Math.min(this.inputEl.scrollHeight, 200) + "px" });
   }
 
+  private saveDraft(): void {
+    this.host.settings.draft = this.inputEl.value;
+    this.host.saveSettingsSoon();
+  }
+
+  /** Положить текст в поле: вместе с высотой, курсором в конце и черновиком. */
+  private setInput(text: string): void {
+    this.inputEl.value = text;
+    this.autoGrow();
+    this.inputEl.setSelectionRange(text.length, text.length);
+    this.saveDraft();
+  }
+
+  /**
+   * Стрелки листают прошлые вопросы — те же, что в быстром меню, только свои.
+   * Возвращает true, если стрелку забрали себе: пока в поле начатый текст, она
+   * должна двигать курсор, а не подменять написанное.
+   */
+  private walkAsks(dir: 1 | -1): boolean {
+    const recent = this.host.settings.recentAsks;
+    if (!recent.length) return false;
+    // Листаем с пустого поля или пока в нём стоит нетронутый прошлый вопрос:
+    // стоило его поправить — и поле снова принадлежит пользователю.
+    const walking = this.askIndex >= 0 && this.inputEl.value === recent[this.askIndex];
+    if (!walking && this.inputEl.value) return false;
+
+    const next = Math.min(Math.max(this.askIndex + dir, -1), recent.length - 1);
+    if (next === this.askIndex) return false;
+    this.askIndex = next;
+    this.setInput(next === -1 ? "" : recent[next]);
+    return true;
+  }
+
+  /** Отправленный вопрос — в список для стрелок, свежий первым. */
+  private rememberAsk(text: string): void {
+    const s = this.host.settings;
+    s.recentAsks = [text, ...s.recentAsks.filter((p) => p !== text)].slice(0, RECENT_LIMIT);
+    this.askIndex = -1;
+  }
+
   private paintSendButton(): void {
     this.sendBtn.empty();
     setIcon(this.sendBtn, this.busy ? "square" : "send-horizontal");
@@ -394,8 +585,10 @@ export class ChatView extends ItemView {
   private async send(): Promise<void> {
     const text = this.inputEl.value.trim();
     if (!text) return;
+    this.rememberAsk(text);
     this.inputEl.value = "";
     this.autoGrow();
+    this.saveDraft();
     await this.submit(text);
   }
 
@@ -407,16 +600,31 @@ export class ChatView extends ItemView {
     // отматывает всё сказанное, включая круги инструментов.
     const startAt = this.host.history.length;
     // Прикреплённое выделение уходит с вопросом и тут же снимается: следующий
-    // вопрос — уже про своё, если не выделить заново.
-    const quote = opts.quote ?? this.attached?.text;
+    // вопрос — уже про своё, если не выделить заново. Явный null в опциях
+    // означает «без фрагмента» и плашку не смотрит вовсе.
+    const quote = (opts.quote === undefined ? this.attached?.text : opts.quote) ?? undefined;
     this.attach(null);
     // Про этот кусок уже спросили, и он остался в ленте. Выделение в заметке
     // никуда не делось — без этого плашка тут же вернулась бы, и фрагмент уехал
     // бы вторым разом за те же деньги.
     if (quote) this.dismissed = quote;
 
-    this.host.history.push({ role: "user", content: opts.display ?? text, quote });
-    const userEl = this.addMessage("user", opts.display ?? text, quote);
+    // Реплику держим объектом: по нему кнопки под сообщением находят своё место
+    // в ленте, как бы она ни менялась под ними.
+    const ask: StoredChatMessage = {
+      role: "user",
+      content: opts.display ?? text,
+      quote,
+      // Показано не то, что уходит в запрос, — запоминаем настоящий вопрос
+      // вместе с его системным промптом, иначе «спросить заново» отправит
+      // подпись действия.
+      resend:
+        opts.display || opts.system || opts.fresh
+          ? { text, system: opts.system, fresh: opts.fresh }
+          : undefined,
+    };
+    this.host.history.push(ask);
+    const userEl = this.addMessage("user", ask.content, quote, ask);
     userEl.scrollIntoView({ block: "end" });
 
     const messages: ChatMessage[] = [];
@@ -424,14 +632,20 @@ export class ChatView extends ItemView {
     // отвечает лекцией о том, что у неё нет доступа к хранилищу. Умеет ли модель
     // инструменты, заранее не знает никто — это выясняется отказом провайдера,
     // и на такой отказ ApiError отвечает подсказкой.
-    const canUseTools = this.host.settings.tools;
+    // Действие, запущенное из заметки в режиме «показать в панели», — это
+    // просьба ответить, а не править. С инструментами «перескажи главу»
+    // кончалось тем, что модель сама клала пересказ на место главы.
+    const canUseTools = this.host.settings.tools && !opts.fromEditor;
     const hint = canUseTools ? t("chatSystemHintTools") : t("chatSystemHint");
     const system = [hint, this.host.settings.systemPrompt.trim(), opts.system?.trim()]
       .filter(Boolean)
       .join("\n\n");
     if (system) messages.push({ role: "system", content: system });
 
-    const note = this.host.noteContext();
+    // «Отправлять заметку как контекст» — это про разговор в панели. Действие
+    // над выделенным уже сказало, над чем работать, и заметка сверху — лишние
+    // деньги и лишняя путаница: модель видит один и тот же текст дважды.
+    const note = opts.fromEditor ? null : this.host.noteContext();
     if (note) {
       messages.push({
         role: "system",
@@ -509,18 +723,25 @@ export class ChatView extends ItemView {
         body.removeClass("ai-streaming");
 
         if (answer.trim()) {
-          this.host.history.push({
+          const reply: StoredChatMessage = {
             role: "assistant",
             content: answer,
             reasoning,
             usage: result.usage ?? undefined,
-          });
+            model: this.host.settings.model,
+          };
+          this.host.history.push(reply);
           await this.renderMarkdown(answer, body);
-          this.addFooter(bubble, answer, result.usage);
+          this.addFooter(bubble, answer, result.usage, reply);
         } else if (result.toolCalls.length === 0) {
           body.setText(t("emptyReply"));
         } else {
           bubble.remove(); // текста не было, дальше идут карточки правок
+        }
+        // Ответ оборван на пределе длины модели. В чате это не всегда видно, а
+        // следующий вопрос уедет вместе с огрызком и продолжится от него.
+        if (result.truncated) {
+          this.listEl.createDiv({ cls: "ai-notice", text: t("chatCutOff") });
         }
         this.followBottom();
 
@@ -565,10 +786,23 @@ export class ChatView extends ItemView {
           // Но в ленту он идёт, только если запрос сняли кнопкой, а не новым
           // вопросом: дописанный в конец, он встал бы после чужого вопроса — и
           // в ленте, и в контексте следующего запроса разговор бы перепутался.
+          let reply: StoredChatMessage | undefined;
           if (this.controller === null || this.controller === controller) {
-            this.host.history.push({ role: "assistant", content: answer, reasoning });
+            reply = {
+              role: "assistant",
+              content: answer,
+              reasoning,
+              model: this.host.settings.model,
+            };
+            this.host.history.push(reply);
             this.host.persistHistory();
           }
+          // Обрыв — не повод прятать кнопки: половину ответа тоже копируют и
+          // вставляют, и спрашивают заново чаще, чем целый.
+          this.addFooter(bubble, answer, null, reply);
+          // Оборвать могли и правкой ленты — тогда пузырь, в который писался
+          // ответ, остался вне документа, и увидеть ответ можно только заново.
+          if (!bubble.isConnected) this.repaint();
         } else {
           bubble.remove();
         }
@@ -643,7 +877,9 @@ export class ChatView extends ItemView {
       apply.onclick = () => finish(true);
       const reject = buttons.createEl("button", { text: t("toolReject") });
       reject.onclick = () => finish(false);
-      apply.focus();
+      // Фокус кнопке «Применить» не даём. Карточка появляется сама, посреди
+      // чтения ответа, и Enter в этот момент — что угодно, только не согласие
+      // переписать заметку: его только что нажали, отправляя вопрос.
       this.followBottom();
     });
   }
@@ -720,7 +956,7 @@ export class ChatView extends ItemView {
         this.renderAction(m);
         continue;
       }
-      const el = this.addMessage(m.role, "", m.quote);
+      const el = this.addMessage(m.role, "", m.quote, m);
       const body = el.querySelector(".ai-msg-body") as HTMLElement;
       if (m.role === "assistant") {
         if (m.reasoning) {
@@ -728,7 +964,7 @@ export class ChatView extends ItemView {
           (block.querySelector(".ai-think-body") as HTMLElement).setText(m.reasoning);
         }
         void this.renderMarkdown(m.content, body);
-        this.addFooter(el, m.content, m.usage ?? null);
+        this.addFooter(el, m.content, m.usage ?? null, m);
       } else {
         body.setText(m.content);
       }
@@ -795,6 +1031,12 @@ export class ChatView extends ItemView {
           new Notice(t("logUndoFail"));
         }
       };
+
+      // Ответ модели — вещь случайная: то же действие по тому же тексту может
+      // выйти лучше. Карточку помечает отменённой сама правка — новая ляжет
+      // отдельной записью ниже.
+      const again = foot.createEl("button", { cls: "ai-log-undo", text: t("logRepeat") });
+      again.onclick = () => void this.host.repeatAction(entry.id);
     }
     if (entry.usage && this.host.settings.showUsage) {
       foot.createSpan({
@@ -821,8 +1063,16 @@ export class ChatView extends ItemView {
     }
   }
 
-  private addMessage(role: "user" | "assistant", text: string, quote?: string): HTMLElement {
+  private addMessage(
+    role: "user" | "assistant",
+    text: string,
+    quote?: string,
+    msg?: StoredChatMessage,
+  ): HTMLElement {
     this.listEl.querySelector(".ai-empty")?.remove();
+    // «Спросить заново» живёт только на последнем ответе: на прежнем эта кнопка
+    // означала бы «снять полразговора», а выглядит она как «переспросить».
+    this.listEl.findAll(".ai-msg-again").forEach((b) => b.remove());
     const el = this.listEl.createDiv({ cls: `ai-msg ai-msg-${role}` });
     el.createDiv({ cls: "ai-msg-role", text: role === "user" ? t("chatYou") : t("chatModel") });
     // Фрагмент, о котором спрашивали, — сворачиваемой цитатой: он бывает длиннее
@@ -834,7 +1084,32 @@ export class ChatView extends ItemView {
     }
     const body = el.createDiv({ cls: "ai-msg-body" });
     if (text) body.setText(text);
+    // У ответа кнопки в общем подвале, а у вопроса свой: он и рисуется сразу,
+    // и ждать в нём нечего.
+    if (msg && role === "user") this.askFooter(el, msg);
     return el;
+  }
+
+  /**
+   * Кнопки под своим вопросом: переписать его и убрать из разговора. Нужны они
+   * реже, чем «скопировать» под ответом, поэтому и держатся в тени.
+   */
+  private askFooter(el: HTMLElement, msg: StoredChatMessage): void {
+    const foot = el.createDiv({ cls: "ai-msg-foot ai-msg-foot-ask" });
+
+    const edit = foot.createEl("button", { cls: "ai-msg-btn clickable-icon" });
+    setIcon(edit, "pencil");
+    edit.setAttr("aria-label", t("chatEditAsk"));
+    edit.onclick = () => this.editAsk(msg);
+
+    this.dropButton(foot, msg);
+  }
+
+  private dropButton(foot: HTMLElement, msg: StoredChatMessage): void {
+    const drop = foot.createEl("button", { cls: "ai-msg-btn clickable-icon" });
+    setIcon(drop, "trash-2");
+    drop.setAttr("aria-label", t("chatDrop"));
+    drop.onclick = () => this.dropMessage(msg);
   }
 
   private addReasoningBlock(bubble: HTMLElement): HTMLElement {
@@ -847,7 +1122,12 @@ export class ChatView extends ItemView {
     return details;
   }
 
-  private addFooter(bubble: HTMLElement, text: string, usage: Usage | null): void {
+  private addFooter(
+    bubble: HTMLElement,
+    text: string,
+    usage: Usage | null,
+    msg?: StoredChatMessage,
+  ): void {
     bubble.querySelector(".ai-msg-foot")?.remove();
     const foot = bubble.createDiv({ cls: "ai-msg-foot" });
 
@@ -867,6 +1147,20 @@ export class ChatView extends ItemView {
     insert.onclick = () => {
       new Notice(this.host.insertIntoEditor(text) ? t("chatInserted") : t("chatNoEditor"));
     };
+
+    // Оборванный ответ в ленту не попадает — переспрашивать и убирать нечего.
+    if (msg) {
+      const again = foot.createEl("button", { cls: "ai-msg-btn ai-msg-again clickable-icon" });
+      setIcon(again, "refresh-cw");
+      again.setAttr("aria-label", t("chatAgain"));
+      again.onclick = () => void this.regenerate(msg);
+
+      this.dropButton(foot, msg);
+    }
+
+    // Чей это ответ. Модель меняется прямо из шапки панели, и без подписи в
+    // одной ленте лежат ответы разных моделей, неотличимые друг от друга.
+    if (msg?.model) foot.createSpan({ cls: "ai-msg-model", text: msg.model });
 
     if (usage && this.host.settings.showUsage) {
       const text =

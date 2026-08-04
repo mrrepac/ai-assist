@@ -11,7 +11,7 @@ export type ActionMode = "replace" | "append" | "chat";
 export interface AiAction {
   id: string;
   name: string;
-  /** Системный промпт. {lang} подставляется языком перевода из настроек. */
+  /** Системный промпт: он и есть всё, что модель знает о задаче. */
   prompt: string;
   mode: ActionMode;
   /** Иконка для меню редактора (набор lucide). */
@@ -87,10 +87,9 @@ export function factoryPrompt(id: string): string | null {
  * причесать разметку. Оговорки про markdown и стихи живут здесь, а не в каждом
  * промпте: в заметках всё это одинаково — и в заводском действии, и в своём.
  */
-export function systemFor(action: AiAction, targetLang: string): string {
-  const prompt = action.prompt.replace(/\{lang\}/g, targetLang);
-  if (action.mode === "chat") return prompt;
-  return [prompt, t("promptKeepMarkup"), t("promptOnlyText")].join("\n\n");
+export function systemFor(action: AiAction): string {
+  if (action.mode === "chat") return action.prompt;
+  return [action.prompt, t("promptKeepMarkup"), t("promptOnlyText")].join("\n\n");
 }
 
 const FENCE = /^```[^\n]*\n([\s\S]*?)\n?```$/;
@@ -143,6 +142,120 @@ export function offsetAt(text: string, line: number, ch: number): number | null 
 /** Есть ли в выделении хоть что-то осмысленное. */
 export function hasText(s: string): boolean {
   return s.trim().length > 0;
+}
+
+const HEADING = /^(#{1,6})\s/;
+/** Строка, открывающая или закрывающая блок кода, — в отличие от FENCE выше, целиком. */
+const FENCE_LINE = /^\s{0,3}(```|~~~)/;
+/** Черта на всю строку: `---`, `***`, `___` и то же самое через пробелы. */
+const RULE = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/;
+
+/**
+ * Уровень заголовка в каждой строке (0 — не заголовок) и с какой строки
+ * начинается сама заметка.
+ *
+ * Считаем сами, а не спрашиваем metadataCache: тот знает файл, каким он
+ * записан на диск, а правим мы то, что набрано в редакторе сию секунду, — и
+ * разъехавшиеся на пару строк координаты означают правку не того куска.
+ * Решётка внутри ``` — это код, а не заголовок; frontmatter не текст заметки
+ * вовсе, и модели там делать нечего.
+ */
+function scanHeadings(lines: string[]): { levels: number[]; start: number } {
+  const levels = new Array<number>(lines.length).fill(0);
+  let start = 0;
+  let fence = "";
+  let front = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (i === 0 && /^---\s*$/.test(line)) {
+      front = true;
+      continue;
+    }
+    if (front) {
+      if (/^(---|\.\.\.)\s*$/.test(line)) {
+        front = false;
+        start = i + 1;
+      }
+      continue;
+    }
+    const open = line.match(FENCE_LINE);
+    if (open) {
+      // Закрывает ограду только такая же: ``` внутри ~~~ — это текст примера.
+      if (!fence) fence = open[1];
+      else if (open[1] === fence) fence = "";
+      continue;
+    }
+    if (fence) continue;
+    const heading = line.match(HEADING);
+    if (heading) levels[i] = heading[1].length;
+  }
+  return { levels, start };
+}
+
+/**
+ * Раздел, в котором стоит курсор: от ближайшего заголовка сверху до
+ * следующего того же или старшего уровня. Подразделы — часть раздела, поэтому
+ * «###» под «##» его не обрывает.
+ *
+ * Заголовок входит в раздел: без него модель не знает, о чём текст, а разметку
+ * она бережёт по общей оговорке. Выше первого заголовка тоже раздел — начало
+ * заметки; заголовков нет вовсе — вся заметка и есть один раздел.
+ *
+ * Пустые строки и черту с конца отбрасываем: модель их не вернёт, и раздел
+ * слипся бы со следующим заголовком.
+ */
+export function sectionAt(lines: string[], at: number): { from: number; to: number } {
+  if (lines.length === 0) return { from: 0, to: 0 };
+  const last = lines.length - 1;
+  const scanned = scanHeadings(lines);
+  // Заметка из одного frontmatter: текст начинается там, где его уже нет.
+  // Без этого начало раздела уезжало за последнюю строку, и диапазон
+  // получался вывернутым.
+  const start = Math.min(scanned.start, last);
+  const levels = scanned.levels;
+  const cursor = Math.min(Math.max(at, start), last);
+
+  let from = start;
+  let level = 0;
+  for (let i = cursor; i >= start; i--) {
+    if (levels[i]) {
+      from = i;
+      level = levels[i];
+      break;
+    }
+  }
+
+  // Из начала заметки (заголовка над курсором нет) выходим на первом же
+  // заголовке — любого уровня.
+  const stop = level || 7;
+  let to = last;
+  for (let i = from + 1; i < lines.length; i++) {
+    if (levels[i] && levels[i] <= stop) {
+      to = i - 1;
+      break;
+    }
+  }
+  while (to > from) {
+    const line = lines[to];
+    // Черта между разделами принадлежит промежутку, а не тексту: модель её не
+    // вернёт, и разделы слиплись бы. Отбрасываем, только если над ней пустая
+    // строка: «Заголовок\n---» — это тоже заголовок, просто сетекстом.
+    const rule = RULE.test(line) && !hasText(lines[to - 1] ?? "");
+    if (hasText(line) && !rule) break;
+    to--;
+  }
+  return { from, to };
+}
+
+/**
+ * Заголовок раздела без решёток — подписью в журнале правок. Пусто, если
+ * раздел начинается не с заголовка: это начало заметки, и называть его нечем.
+ */
+export function sectionName(line: string): string {
+  if (!HEADING.test(line)) return "";
+  const title = line.replace(HEADING, "").trim();
+  return title.length > 30 ? title.slice(0, 29) + "…" : title;
 }
 
 /** Короткая подпись действия для уведомлений и статус-бара. */

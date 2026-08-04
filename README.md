@@ -19,20 +19,43 @@ sidebar, but the main road is selection → key → done.
 - **Actions over the selection.** Fix spelling, improve the text, expand it, shorten it,
   evaluate it — or write your own prompt. The result replaces the selected text; the undo
   is the usual `Ctrl+Z`.
+- **Selecting is optional.** The settings decide what an action works on when nothing is
+  selected: the whole note, the section under the cursor (from its heading down to the next
+  one of the same level, subsections included), the paragraph — or nothing at all, if you
+  would rather always be asked to select.
 - **Quick menu** opens over the selection: the digits run your presets — five keys to begin
   with, up to nine if you add them — and the field below takes a one-off instruction. The
   digit only picks a preset while the field is empty, so a prompt can start with a number.
+  The answer to a one-off instruction comes to the chat; `Ctrl+Enter` puts it into the note
+  instead.
   The physical key is what counts, so any keyboard layout works. The menu comes without a
   key of its own: switch on `Alt+1` in the settings, or bind whatever suits you.
+- **Nothing selected — you see what was taken.** The menu then grows a row — paragraph,
+  section, note — with the size of each, the one from your settings picked and the piece
+  itself highlighted in the note. The arrow keys change it for this one run; the setting
+  stays as it was.
+- **Right-click on the selection.** The editor's context menu offers the quick menu and a
+  question to the chat — and the actions themselves, each on its own line, if you want them
+  there. On a phone it is the same menu, held down. With nothing selected the plugin adds
+  nothing to it.
 - **Ask about a fragment.** Select a piece of a note and go to the chat: it comes along as
   an attachment, so the question can be just "and shorter?" — and the fragment stays with
   the conversation for the questions that follow.
 - **A journal of edits** in the side panel: what ran, what came back, what exactly changed
-  (word-level diff, "was → became") and an "Undo the edit" button.
+  (word-level diff, "was → became"), an "Undo the edit" button and a "Run it again" one —
+  it brings the text back and runs the same action over it once more.
 - **Chat in the right sidebar** with streaming, thinking blocks, the running cost in
   tokens, and a button that saves the conversation into a note.
+- **The conversation can be rewritten.** Under an answer — "ask again"; under your own
+  question — a pencil that puts the text back into the field, so the question can leave as
+  a different one. The bin removes what is not needed, and whatever was removed comes back
+  from the notice.
+- **The input field remembers.** An unfinished question survives closing the panel and
+  restarting Obsidian, and the up arrow walks through your previous questions.
 - **The model can edit the note itself** through tools — every edit is shown as a card
-  with an Apply button, so nothing lands in your text without you.
+  with an Apply button, so nothing lands in your text without you. An action that answers
+  in the panel gets no tools at all: "show it in the panel" already says "leave the note
+  alone".
 
 ## Providers
 
@@ -57,18 +80,21 @@ none is sent.
    provider for the list. There is a "Test connection" button right below.
 3. In the "Quick menu" section, switch on `Alt+1` — or give the "Quick menu over the
    selection" command a key of your own in Obsidian's hotkey settings.
-4. Select some text in a note and press it.
+4. Select some text in a note and press it. Or right-click the selection — the plugin is
+   already there.
 
 ## Settings
 
 Everything lives in three sections:
 
 - **Provider** — service, address, key, model, connection test.
-- **Behaviour** — temperature, response length limit, streaming, thinking (DeepSeek),
-  what to do when nothing is selected (the whole note / the paragraph under the cursor /
-  nothing), token usage display, note editing tools, the system prompt for the chat.
+- **Behaviour** — temperature, response length limit, streaming,
+  what to do when nothing is selected (the whole note / the section / the paragraph /
+  nothing), the length past which it asks before sending, token usage display, note
+  editing tools, the system prompt for the chat.
 - **Quick menu** — the keys: five by default, more if you add them, and a row can be
-  dragged by its handle. Each key is an action, and this is where an action is
+  dragged by its handle; plus what the plugin puts into the editor's context menu. Each
+  key is an action, and this is where an action is
   edited: name, icon, prompt, and what to do with the answer. Your own action is created
   in a slot too. An action taken off a slot is not lost — it keeps its own command, and a
   command can be given a hotkey.

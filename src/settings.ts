@@ -6,7 +6,9 @@ import { ActionModal, ConfirmModal, ModelSuggestModal } from "./modals";
 import type AiAssistPlugin from "./main";
 import { QUICK_KEYS } from "./quickmenu";
 import {
+  AiAssistSettings,
   DEEPSEEK_MODELS,
+  EditorMenuMode,
   PROVIDER_ORDER,
   QUICK_ASK,
   QUICK_SLOTS_MAX,
@@ -87,6 +89,25 @@ export class AiAssistSettingTab extends PluginSettingTab {
     // перерисовываем — иначе настройки отпрыгивают к началу на каждое движение.
     this.slotsEl = containerEl.createDiv({ cls: "ai-slots" });
     this.renderSlots();
+
+    // Меню и клавиша — про одно и то же: как добраться до действий, не заходя
+    // в палитру команд. Поэтому дверь рядом с ключом.
+    new Setting(containerEl)
+      .setName(t("setEditorMenu"))
+      .setDesc(t("setEditorMenuDesc"))
+      .addDropdown((c) =>
+        c
+          .addOptions({
+            none: t("setMenuNone"),
+            quick: t("setMenuQuick"),
+            actions: t("setMenuActions"),
+          })
+          .setValue(s.editorMenu)
+          .onChange(async (v) => {
+            s.editorMenu = v as EditorMenuMode;
+            await this.save();
+          }),
+      );
 
     new Setting(containerEl)
       .setName(t("setHotkey"))
@@ -465,50 +486,6 @@ export class AiAssistSettingTab extends PluginSettingTab {
         );
     }
 
-    if (s.kind === "deepseek") {
-      new Setting(containerEl)
-        .setName(t("setThinking"))
-        .setDesc(t("setThinkingDesc"))
-        .addToggle((c) =>
-          c.setValue(s.thinking).onChange(async (v) => {
-            s.thinking = v;
-            await this.save();
-            this.display();
-          }),
-        );
-
-      if (s.thinking) {
-        new Setting(containerEl)
-          .setName(t("setEffort"))
-          .addDropdown((c) =>
-            c
-              .addOptions({
-                low: t("setEffortLow"),
-                medium: t("setEffortMedium"),
-                high: t("setEffortHigh"),
-              })
-              .setValue(s.reasoningEffort)
-              .onChange(async (v) => {
-                s.reasoningEffort = v as "low" | "medium" | "high";
-                await this.save();
-              }),
-          );
-      }
-    }
-
-    new Setting(containerEl)
-      .setName(t("setLang"))
-      .setDesc(t("setLangDesc"))
-      .addText((c) =>
-        c
-          .setPlaceholder(t("askLangPlaceholder"))
-          .setValue(s.targetLang)
-          .onChange((v) => {
-            s.targetLang = v.trim() || t("defaultLang");
-            this.saveLater();
-          }),
-      );
-
     new Setting(containerEl)
       .setName(t("setNoSelection"))
       .setDesc(t("setNoSelectionDesc"))
@@ -516,13 +493,29 @@ export class AiAssistSettingTab extends PluginSettingTab {
         c
           .addOptions({
             note: t("setNoSelectionNote"),
+            section: t("setNoSelectionSection"),
             paragraph: t("setNoSelectionParagraph"),
             none: t("setNoSelectionNone"),
           })
           .setValue(s.noSelection)
           .onChange(async (v) => {
-            s.noSelection = v as "note" | "paragraph" | "none";
+            s.noSelection = v as AiAssistSettings["noSelection"];
             await this.save();
+          }),
+      );
+
+    // Порог общий и для выделенного тоже, поэтому показывается всегда — даже
+    // когда без выделения плагин не работает вовсе.
+    new Setting(containerEl)
+      .setName(t("setWarnOver"))
+      .setDesc(t("setWarnOverDesc"))
+      .addText((c) =>
+        c
+          .setPlaceholder("20000")
+          .setValue(String(s.warnOver))
+          .onChange((v) => {
+            s.warnOver = Math.max(0, Math.round(Number(v) || 0));
+            this.saveLater();
           }),
       );
 

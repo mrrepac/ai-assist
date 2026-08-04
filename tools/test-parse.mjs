@@ -38,7 +38,7 @@ async function load(entry, name) {
 }
 
 const { drainSse, endpoint, collectToolCalls, isLocalUrl } = await load("src/api.ts", "api");
-const { cleanReply, offsetAt } = await load("src/actions.ts", "actions");
+const { cleanReply, offsetAt, sectionAt, sectionName } = await load("src/actions.ts", "actions");
 const { contextWindow, messageText } = await load("src/history.ts", "history");
 const { mergeSettings, providerOf, streamAvailable, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank } = await load("src/types.ts", "types");
 const { chatToMarkdown } = await load("src/chatnote.ts", "chatnote");
@@ -100,6 +100,28 @@ check("[DONE] не ломает разбор", collect([event("Всё"), "data: 
 check("пинги двоеточием игнорируются", collect([": keep-alive\n\n", event("ок")]), "ок");
 check("битый JSON пропускается", collect(["data: {не json}\n\n", event("живо")]), "живо");
 check("несколько событий в одном чанке", collect([event("а") + event("б") + event("в")]), "абв");
+
+// Причина остановки приезжает последним событием, с пустой дельтой: по ней
+// видно, что ответ оборван на пределе длины, — такой в заметку писать нельзя.
+const finishOf = (raw) => {
+  let reason = "";
+  drainSse(raw, (e) => {
+    const r = e.choices?.[0]?.finish_reason;
+    if (r) reason = r;
+  });
+  return reason;
+};
+check(
+  "предел длины виден в последнем событии",
+  finishOf(event("текст") + 'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n'),
+  "length",
+);
+check(
+  "обычное окончание — не обрыв",
+  finishOf(event("текст") + 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'),
+  "stop",
+);
+check("без причины остановки поле пустое", finishOf(event("текст")), "");
 
 // ——— чистка ответа ———
 check("блок кода снимается", cleanReply("```\nтекст\n```", "текст"), "текст");
@@ -402,6 +424,72 @@ check("конец строки", offsetAt(LINES, 0, 6), 6);
 check("строки за концом текста нет", offsetAt(LINES, 9, 0), null);
 check("колонки за концом строки нет", offsetAt(LINES, 0, 99), null);
 
+// ——— раздел под курсором ———
+// Правка идёт по невидимым границам: ошибка здесь — это переписанный не тот
+// кусок заметки, и заметит её пользователь, а не тест.
+const SONG = [
+  "---",              // 0
+  "tags: [песня]",    // 1
+  "# заголовок в frontmatter не заголовок",  // 2
+  "---",              // 3
+  "черновик",         // 4
+  "",                 // 5
+  "## Куплет 1",      // 6
+  "строка про снег",  // 7
+  "",                 // 8
+  "### Вариант",      // 9
+  "строка про дождь", // 10
+  "",                 // 11
+  "",                 // 12
+  "## Припев",        // 13
+  "строка про свет",  // 14
+];
+check("курсор в куплете — от заголовка", sectionAt(SONG, 7), { from: 6, to: 10 });
+// Подраздел — часть раздела сверху, но если курсор стоит в нём самом, берём
+// его: это ближайшая граница, и она мельче.
+check("подраздел входит в раздел целиком", sectionAt(SONG, 7).to, 10);
+check("курсор в подразделе — берётся подраздел", sectionAt(SONG, 10), { from: 9, to: 10 });
+check("курсор на заголовке — его же раздел", sectionAt(SONG, 6), { from: 6, to: 10 });
+check("пустые строки перед следующим заголовком отброшены", sectionAt(SONG, 7).to, 10);
+check("последний раздел — до конца заметки", sectionAt(SONG, 14), { from: 13, to: 14 });
+check("до первого заголовка — начало заметки", sectionAt(SONG, 4), { from: 4, to: 4 });
+check("frontmatter в раздел не попадает", sectionAt(SONG, 0), { from: 4, to: 4 });
+
+// Черта между разделами: в сценариях Льва ею отбит каждый эпизод, и уехать в
+// модель она не должна — вернётся текст без неё, и разделы слипнутся.
+const RULED = ["текст", "", "---", "", "## Дальше", "ещё текст"];
+check("черта между разделами в раздел не входит", sectionAt(RULED, 0), { from: 0, to: 0 });
+check("«Заголовок\\n---» — сетекст, черту не трогаем", sectionAt(["Заголовок", "---", "текст"], 2), {
+  from: 0,
+  to: 2,
+});
+
+// Заметка из одного frontmatter: текста нет вовсе, и диапазон не должен
+// оказаться вывернутым — по нему пойдёт замена в редакторе.
+const ONLY_FRONT = sectionAt(["---", "tags: [x]", "---"], 1);
+check("заметка без текста — диапазон не вывернут", ONLY_FRONT.to >= ONLY_FRONT.from, true);
+
+const PLAIN = ["просто заметка", "", "без заголовков"];
+check("заголовков нет — вся заметка", sectionAt(PLAIN, 1), { from: 0, to: 2 });
+check("пустых строк нет — одна строка", sectionAt(["строка"], 0), { from: 0, to: 0 });
+
+const CODE = [
+  "# Заметка",        // 0
+  "```bash",          // 1
+  "# это комментарий, а не заголовок",  // 2
+  "echo привет",      // 3
+  "```",              // 4
+  "хвост",            // 5
+  "# Другая заметка", // 6
+];
+check("решётка в блоке кода не заголовок", sectionAt(CODE, 3), { from: 0, to: 5 });
+check("равный уровень обрывает раздел", sectionAt(CODE, 6), { from: 6, to: 6 });
+check("~~~ внутри ``` не закрывает ограду", sectionAt(["# Т", "```", "~~~", "# нет", "```", "хвост"], 3), { from: 0, to: 5 });
+
+check("имя раздела без решёток", sectionName("## Куплет 1"), "Куплет 1");
+check("длинное имя обрезается", sectionName("### " + "я".repeat(40)).length, 30);
+check("не заголовок — имени нет", sectionName("просто строка"), "");
+
 // ——— слоты быстрого меню ———
 const FRESH_SLOTS = ["spelling", "expand", "clarify", "shorten", "evaluate"];
 check("клавиш по умолчанию пять", mergeSettings({ quickSlots: ["spelling"] }).quickSlots.length, 5);
@@ -615,6 +703,17 @@ check("по умолчанию берётся вся заметка", mergeSetti
 check("старый выключенный фолбэк остаётся запретом", mergeSettings({ paragraphFallback: false }).noSelection, "none");
 check("старый включённый фолбэк становится заметкой", mergeSettings({ paragraphFallback: true }).noSelection, "note");
 check("явно выбранный абзац сохраняется", mergeSettings({ noSelection: "paragraph" }).noSelection, "paragraph");
+check("раздел сохраняется", mergeSettings({ noSelection: "section" }).noSelection, "section");
+
+// Порог, после которого плагин переспрашивает. Ноль осмысленный — «не
+// спрашивать», поэтому пустое поле в старых настройках и ноль это разные вещи.
+check("порог по умолчанию", mergeSettings(null).warnOver, 20000);
+check("свой порог сохраняется", mergeSettings({ warnOver: 100000 }).warnOver, 100000);
+check("ноль — это «не спрашивать», а не мусор", mergeSettings({ warnOver: 0 }).warnOver, 0);
+check("настройки прошлой версии получают порог по умолчанию", mergeSettings({ temperature: 1 }).warnOver, 20000);
+check("мусор в пороге чинится", mergeSettings({ warnOver: "много" }).warnOver, 20000);
+check("отрицательный порог — это ноль", mergeSettings({ warnOver: -5 }).warnOver, 0);
+check("дробный порог округляется", mergeSettings({ warnOver: 1000.7 }).warnOver, 1001);
 check("мусор в поле чинится", mergeSettings({ noSelection: "ой" }).noSelection, "note");
 check(
   "своё действие остаётся в слоте",
@@ -631,6 +730,24 @@ check("промпты по умолчанию пусты", mergeSettings(null).r
 check("промпты переживают загрузку", mergeSettings({ recentPrompts: ["сократи", "разверни"] }).recentPrompts, ["сократи", "разверни"]);
 check("не-строки отсеиваются", mergeSettings({ recentPrompts: ["ок", 5, null] }).recentPrompts, ["ок"]);
 check("мусор вместо списка промптов", mergeSettings({ recentPrompts: "ой" }).recentPrompts, []);
+
+// ——— вопросы из чата и черновик ———
+// Тот же список, что у промптов быстрого меню, но свой: стрелка в панели листает
+// вопросы, а не правки текста.
+check("вопросов по умолчанию нет", mergeSettings(null).recentAsks, []);
+check("вопросы переживают загрузку", mergeSettings({ recentAsks: ["а покороче?"] }).recentAsks, ["а покороче?"]);
+check("не-строки отсеиваются и здесь", mergeSettings({ recentAsks: [1, "ок"] }).recentAsks, ["ок"]);
+check("мусор вместо списка вопросов", mergeSettings({ recentAsks: 7 }).recentAsks, []);
+check("длинный список обрезается", mergeSettings({ recentAsks: Array.from({ length: 15 }, (_, i) => String(i)) }).recentAsks.length, 10);
+check("черновика по умолчанию нет", mergeSettings(null).draft, "");
+check("черновик переживает загрузку", mergeSettings({ draft: "недописанный воп" }).draft, "недописанный воп");
+check("мусор вместо черновика", mergeSettings({ draft: { a: 1 } }).draft, "");
+
+// ——— контекстное меню ———
+check("меню по умолчанию — два пункта", mergeSettings(null).editorMenu, "quick");
+check("выбранный режим сохраняется", mergeSettings({ editorMenu: "actions" }).editorMenu, "actions");
+check("выключенное меню сохраняется", mergeSettings({ editorMenu: "none" }).editorMenu, "none");
+check("мусор в режиме меню чинится", mergeSettings({ editorMenu: "всё" }).editorMenu, "quick");
 
 // ——— порядок провайдеров ———
 // Один список на выпадающее меню в настройках и на меню в шапке панели.

@@ -25,12 +25,15 @@ export interface AiAssistSettings {
   temperature: number;
   maxTokens: number;
   stream: boolean;
-  thinking: boolean;
-  reasoningEffort: "low" | "medium" | "high";
-  targetLang: string;
   systemPrompt: string;
   /** С чем работать, когда ничего не выделено. */
-  noSelection: "note" | "paragraph" | "none";
+  noSelection: "note" | "section" | "paragraph" | "none";
+  /**
+   * Порог в знаках, после которого плагин переспрашивает, прежде чем отправить
+   * текст; 0 — не спрашивать никогда. Не запрет: решает пользователь, ему надо
+   * только знать цену — и деньги, и то, что длинный ответ вернётся оборванным.
+   */
+  warnOver: number;
   showUsage: boolean;
   /** Класть текущую заметку в контекст чата. */
   chatContextNote: boolean;
@@ -44,8 +47,18 @@ export interface AiAssistSettings {
    * спецпункт (@ask, @translate-to) или пустая строка.
    */
   quickSlots: string[];
+  /** Что плагин добавляет в контекстное меню редактора над выделением. */
+  editorMenu: EditorMenuMode;
   /** Последние свои промпты из быстрого меню — листаются стрелками. */
   recentPrompts: string[];
+  /** Последние вопросы из чата — листаются стрелками в поле ввода. */
+  recentAsks: string[];
+  /**
+   * Недописанный вопрос из панели. Живёт в настройках, а не в ленте: лента
+   * стирается «новым чатом» и на запуске, а черновик должен пережить и то, и
+   * другое — панель закрывают на середине фразы чаще, чем кажется.
+   */
+  draft: string;
   /** Открывать Obsidian с пустой лентой, не подхватывая вчерашний разговор. */
   freshStart: boolean;
   /**
@@ -58,6 +71,16 @@ export interface AiAssistSettings {
 
 /** Спецпункт быстрого меню — не действие, а отдельная команда плагина. */
 export const QUICK_ASK = "@ask";
+
+/**
+ * Что плагин кладёт в контекстное меню редактора:
+ *  none    — ничего;
+ *  quick   — быстрое меню и вопрос в чат, два пункта;
+ *  actions — плюс сами действия с клавиш быстрого меню, каждое своей строкой.
+ */
+export type EditorMenuMode = "none" | "quick" | "actions";
+
+export const EDITOR_MENU_MODES: EditorMenuMode[] = ["none", "quick", "actions"];
 
 /** Сколько клавиш в быстром меню сразу: рука помнит первые пять. */
 export const QUICK_SLOTS_DEFAULT = 5;
@@ -77,6 +100,18 @@ export interface StoredChatMessage {
   reasoning?: string;
   /** Расход на этот ответ: иначе после перезагрузки панели счёт пропадал. */
   usage?: { prompt: number; completion: number; cached: number };
+  /**
+   * Чей это ответ. Модель переключается прямо из шапки панели, и через десять
+   * реплик уже не вспомнить, кто что сказал.
+   */
+  model?: string;
+  /**
+   * Запрос, стоящий за репликой, когда показано не то, что ушло: действие над
+   * выделением рисуется в ленте своим названием, а модели уходил сам текст со
+   * своим системным промптом. Без этого «спросить заново» пересобрало бы вопрос
+   * из подписи действия.
+   */
+  resend?: { text: string; system?: string; fresh?: boolean };
 }
 
 /**
@@ -190,18 +225,23 @@ export function defaultSettings(): AiAssistSettings {
     temperature: 0.3,
     maxTokens: 0,
     stream: true,
-    thinking: false,
-    reasoningEffort: "medium",
-    targetLang: t("defaultLang"),
     systemPrompt: t("setSystemPlaceholder"),
     noSelection: "note",
+    // Двадцать тысяч знаков — примерно столько модель ещё в состоянии вернуть
+    // обратно, а дальше начинается обрыв ответа на полуслове.
+    warnOver: 20000,
     showUsage: true,
     chatContextNote: false,
     tools: true,
     toolsConfirm: true,
     actions: defaultActions(),
     quickSlots: ["spelling", "expand", "clarify", "shorten", "evaluate"],
+    // Два пункта, а не весь список действий: контекстное меню общее для всех
+    // плагинов, и занимать в нём семь строк без спроса — невежливо.
+    editorMenu: "quick",
     recentPrompts: [],
+    recentAsks: [],
+    draft: "",
     freshStart: true,
     defaultHotkey: false,
   };
@@ -234,10 +274,13 @@ export function mergeSettings(raw: unknown): AiAssistSettings {
 
   merged.temperature = clamp(Number(merged.temperature), 0, 2, base.temperature);
   merged.maxTokens = Math.max(0, Math.round(Number(merged.maxTokens) || 0));
+  // Ноль здесь осмысленный («не спрашивать»), поэтому отличаем его от
+  // отсутствующего поля по типу, а не по значению.
+  merged.warnOver =
+    typeof s.warnOver === "number" && Number.isFinite(s.warnOver)
+      ? Math.max(0, Math.round(s.warnOver))
+      : base.warnOver;
   merged.kind = merged.kind === "openai" ? "openai" : "deepseek";
-  if (!["low", "medium", "high"].includes(merged.reasoningEffort)) {
-    merged.reasoningEffort = base.reasoningEffort;
-  }
 
   // Встроенные действия должны быть на месте даже после ручной правки data.json,
   // а пользовательские — пережить обновление плагина.
@@ -282,14 +325,16 @@ export function mergeSettings(raw: unknown): AiAssistSettings {
   // остаться: новая установка получает выключенный хоткей, прежняя — включённый.
   if (typeof s.defaultHotkey !== "boolean") merged.defaultHotkey = true;
 
-  merged.recentPrompts = Array.isArray(s.recentPrompts)
-    ? s.recentPrompts.filter((p) => typeof p === "string").slice(0, 10)
-    : [];
+  merged.recentPrompts = cleanList(s.recentPrompts);
+  merged.recentAsks = cleanList(s.recentAsks);
+  merged.draft = typeof s.draft === "string" ? s.draft : "";
+
+  if (!EDITOR_MENU_MODES.includes(merged.editorMenu)) merged.editorMenu = base.editorMenu;
 
   // Раньше поведение без выделения было переключателем «брать абзац». Смотрим
   // именно на сохранённое поле: у merged значение уже подставлено из умолчаний,
   // и по нему не отличить «настройки из старой версии» от осознанного выбора.
-  if (!["note", "paragraph", "none"].includes(s.noSelection as string)) {
+  if (!["note", "section", "paragraph", "none"].includes(s.noSelection as string)) {
     const old = (s as { paragraphFallback?: boolean }).paragraphFallback;
     merged.noSelection = old === false ? "none" : base.noSelection;
   }
@@ -334,6 +379,12 @@ function cleanProfiles(raw: unknown): Record<string, ProviderProfile> {
     };
   }
   return out;
+}
+
+/** Список прошлых промптов из data.json: строки, и не больше десяти. */
+function cleanList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((p): p is string => typeof p === "string").slice(0, 10);
 }
 
 function isAction(a: unknown): a is AiAction {

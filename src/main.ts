@@ -1,7 +1,9 @@
 import {
   Editor,
   EditorPosition,
+  MarkdownFileInfo,
   MarkdownView,
+  Menu,
   Notice,
   Platform,
   Plugin,
@@ -10,12 +12,22 @@ import {
   moment,
   setIcon,
 } from "obsidian";
-import { AiAction, cleanReply, hasText, offsetAt, shortName, systemFor } from "./actions";
+import {
+  AiAction,
+  cleanReply,
+  hasText,
+  offsetAt,
+  sectionAt,
+  sectionName,
+  shortName,
+  systemFor,
+} from "./actions";
 import { ApiConfig, ApiError, Usage, chat } from "./api";
 import { chatToMarkdown } from "./chatnote";
 import { diffWords } from "./diff";
-import { t } from "./i18n";
-import { QuickMenu, RECENT_LIMIT } from "./quickmenu";
+import { I18nKey, t } from "./i18n";
+import { askConfirm } from "./modals";
+import { QuickMenu, QuickScope, RECENT_LIMIT } from "./quickmenu";
 import { ReplaceResult } from "./tools";
 import { AiAssistSettingTab } from "./settings";
 import {
@@ -23,6 +35,7 @@ import {
   AiAssistSettings,
   HistoryItem,
   QUICK_ASK,
+  StoredChatMessage,
   StoredData,
   isActionEntry,
   mergeSettings,
@@ -32,12 +45,6 @@ import { ChatHost, ChatView, VIEW_TYPE_CHAT } from "./view";
 
 /** Сколько символов заметки максимум уходит в контекст чата. */
 const CONTEXT_LIMIT = 40000;
-/**
- * Сколько символов максимум берём, когда ничего не выделено. Обрезать здесь
- * нельзя — обрезанный ответ заменит собой всю заметку, — поэтому не работаем
- * вовсе. Выделенное таких вопросов не вызывает: раз выделили, значит хотели.
- */
-const IMPLICIT_LIMIT = 40000;
 /** Сколько сообщений храним между запусками. */
 const HISTORY_LIMIT = 100;
 /** Сколько символов результата показывать в журнале: он и так уже в заметке. */
@@ -50,6 +57,21 @@ const LOG_PREVIEW = 600;
 const UNDO_LIMIT = 20;
 
 /**
+ * Своя часть контекстного меню редактора. Пункты с одинаковой секцией Obsidian
+ * держит вместе и отделяет чертой — иначе они разъехались бы по чужим группам.
+ */
+const MENU_SECTION = "ai-assist";
+
+/** Куски заметки, которые плагин умеет взять сам, — от меньшего к большему. */
+type ScopeKind = "paragraph" | "section" | "note";
+const SCOPES: ScopeKind[] = ["paragraph", "section", "note"];
+const SCOPE_LABEL: Record<ScopeKind, I18nKey> = {
+  paragraph: "scopeParagraph",
+  section: "scopeSection",
+  note: "scopeNote",
+};
+
+/**
  * Заметка в контекст: длинную берём началом. Что она обрезана, говорим и модели,
  * и пользователю — иначе ответ по половине текста выглядит как ответ по всему.
  */
@@ -58,20 +80,30 @@ function clip(text: string): { text: string; clipped: boolean } {
   return { text: text.slice(0, CONTEXT_LIMIT), clipped: true };
 }
 
-/** Что нужно, чтобы отменить одну правку. */
+/** Что нужно, чтобы отменить одну правку — и чтобы переделать её заново. */
 interface UndoRecord {
   path: string;
   from: EditorPosition;
   written: string;
   original: string;
+  /**
+   * Текст, над которым работали, и где он лежал. Для замены это то же, что
+   * original, а для дописывания — нет: там написанное легло рядом с исходным
+   * куском, и без его координат прогнать действие ещё раз не по чему.
+   */
+  source: { from: EditorPosition; text: string };
+  /** Какое действие это было. Разовый промпт в настройках не живёт — храним целиком. */
+  action: AiAction;
 }
 
 interface Selection {
   text: string;
   from: EditorPosition;
   to: EditorPosition;
-  /** Текст взят без выделения — вся заметка или абзац под курсором. */
+  /** Текст взят без выделения — заметка, раздел или абзац под курсором. */
   implicit: boolean;
+  /** Чем этот кусок назвать в журнале: заголовок раздела, если он есть. */
+  label?: string;
 }
 
 /** Куда ляжет правка. Файл запоминаем отдельно: пока модель думает, во вьюхе
@@ -93,6 +125,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   private mobileNotice: Notice | null = null;
   private running: AbortController | null = null;
   private saveTimer: number | null = null;
+  private settingsTimer: number | null = null;
   private lastRun: AiAction | null = null;
 
   async onload(): Promise<void> {
@@ -164,6 +197,14 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     });
 
     this.registerActionCommands();
+
+    // Правая кнопка по выделению: до сих пор в плагин вела только клавиша или
+    // палитра команд, а на телефоне — одна палитра.
+    this.registerEvent(
+      this.app.workspace.on("editor-menu", (menu, editor, info) =>
+        this.fillMenu(menu, editor, info),
+      ),
+    );
   }
 
   onunload(): void {
@@ -176,6 +217,62 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       this.saveTimer = null;
       void this.writeHistory(this.history.slice(-HISTORY_LIMIT));
     }
+    // То же с черновиком: панель закрывают посреди фразы, и последние буквы
+    // ушли бы вместе с таймером.
+    if (this.settingsTimer !== null) {
+      window.clearTimeout(this.settingsTimer);
+      this.settingsTimer = null;
+      void this.saveData({ settings: this.settings });
+    }
+  }
+
+  // ——————————————————————— контекстное меню ———————————————————————
+
+  /**
+   * Пункты плагина в меню редактора. Без выделения не показываем ничего:
+   * работа идёт над выделенным текстом, а случайный щелчок по «Исправить
+   * орфографию» в пустом месте переписал бы всю заметку целиком.
+   */
+  private fillMenu(menu: Menu, editor: Editor, info: MarkdownView | MarkdownFileInfo): void {
+    const mode = this.settings.editorMenu;
+    if (mode === "none" || !hasText(editor.getSelection())) return;
+    if (!(info instanceof MarkdownView)) return;
+    const view = info;
+
+    if (mode === "actions") {
+      // Ровно то, что лежит на клавишах быстрого меню: держать два разных
+      // набора — значит настраивать их по отдельности. Одно действие может
+      // стоять на двух клавишах, в меню оно нужно один раз.
+      const seen = new Set<string>();
+      for (const id of this.settings.quickSlots) {
+        if (id === QUICK_ASK || seen.has(id)) continue;
+        seen.add(id);
+        const action = this.settings.actions.find((a) => a.id === id);
+        if (!action) continue;
+        menu.addItem((item) =>
+          item
+            .setSection(MENU_SECTION)
+            .setTitle(action.name)
+            .setIcon(action.icon)
+            .onClick(() => void this.runAction(action, editor, view)),
+        );
+      }
+    }
+
+    menu.addItem((item) =>
+      item
+        .setSection(MENU_SECTION)
+        .setTitle(t("menuQuick"))
+        .setIcon("wand-sparkles")
+        .onClick(() => this.openQuickMenu(editor, view)),
+    );
+    menu.addItem((item) =>
+      item
+        .setSection(MENU_SECTION)
+        .setTitle(t("menuAsk"))
+        .setIcon("message-circle-question")
+        .onClick(() => void this.askAboutSelection(editor)),
+    );
   }
 
   // ——————————————————————— хранилище ———————————————————————
@@ -251,16 +348,34 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     return chatToMarkdown(this.history, this.settings.model, moment().format("DD.MM.YYYY HH:mm"));
   }
 
+  /**
+   * Имя заметки с разговором. Дата файлы различает, но ничего не говорит: в
+   * списке заметок все чаты выглядят одинаково. Берём начало первого вопроса —
+   * по нему разговор и вспоминается, а дата и модель есть внутри, первой строкой.
+   */
+  private chatTitle(): string {
+    const first = this.history.find(
+      (item): item is StoredChatMessage => !isActionEntry(item) && item.role === "user",
+    );
+    const ask = (first?.content ?? "").replace(/\s+/g, " ").trim();
+    if (!ask) return t("chatNoteTitle", { when: moment().format("YYYY-MM-DD HH-mm") });
+
+    let head = ask.slice(0, 40);
+    if (ask.length > 40) {
+      // Режем по слову, но не оставляем огрызок: «Чат — как» хуже целой строки.
+      const space = head.lastIndexOf(" ");
+      if (space > 20) head = head.slice(0, space);
+    }
+    return t("chatNoteTitleAsk", { ask: head });
+  }
+
   async saveChat(): Promise<void> {
     const markdown = this.chatMarkdown();
     if (!markdown) {
       new Notice(t("chatNothingToSave"));
       return;
     }
-    const path = await this.createNote(
-      t("chatNoteTitle", { when: moment().format("YYYY-MM-DD HH-mm") }),
-      markdown,
-    );
+    const path = await this.createNote(this.chatTitle(), markdown);
     if (!path) return;
     // Открываем новой вкладкой: заметка, над которой шла работа, должна
     // остаться на месте.
@@ -269,9 +384,27 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   }
 
   async saveSettings(): Promise<void> {
+    // Отложенная запись больше не нужна: сейчас на диск уйдут все настройки
+    // разом, вместе с тем, ради чего она была заведена.
+    if (this.settingsTimer !== null) {
+      window.clearTimeout(this.settingsTimer);
+      this.settingsTimer = null;
+    }
     await this.saveData({ settings: this.settings });
     this.registerActionCommands();
     this.chatView?.refreshHeader();
+  }
+
+  /**
+   * Тихая запись настроек: черновик вопроса меняется на каждую букву, а
+   * saveSettings — это ещё и перерегистрация всех команд плагина.
+   */
+  saveSettingsSoon(): void {
+    if (this.settingsTimer !== null) window.clearTimeout(this.settingsTimer);
+    this.settingsTimer = window.setTimeout(() => {
+      this.settingsTimer = null;
+      void this.saveData({ settings: this.settings });
+    }, 1000);
   }
 
   /** История меняется часто — пишем на диск не чаще раза в секунду. */
@@ -309,8 +442,8 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   // ——————————————————————— выполнение действия ———————————————————————
 
   /**
-   * Выделение с проверкой размера. Оба отказа объясняем вслух: молчаливое
-   * «ничего не произошло» пользователь принимает за поломку плагина.
+   * Выделение с проверкой. Отказ объясняем вслух: молчаливое «ничего не
+   * произошло» пользователь принимает за поломку плагина.
    */
   private grabChecked(editor: Editor): Selection | null {
     const sel = this.grabSelection(editor);
@@ -318,16 +451,36 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       new Notice(t("noSelection"));
       return null;
     }
-    // Забыть выделить на длинной заметке — обычное дело, а уезжает она в API
-    // целиком: и деньги, и почти наверняка отказ провайдера по длине запроса.
-    if (sel.implicit && sel.text.length > IMPLICIT_LIMIT) {
-      new Notice(t("tooBig", { chars: sel.text.length, limit: IMPLICIT_LIMIT }), 8000);
-      return null;
+    return sel;
+  }
+
+  /**
+   * То же, но с вопросом, если текста больше порога. Забыть выделить на длинной
+   * заметке — обычное дело, и уезжает она в API целиком: это и деньги, и ответ,
+   * который модель почти наверняка оборвёт на полуслове. Поэтому не запрет, а
+   * вопрос: решать всё равно пользователю, ему нужно только знать цену.
+   */
+  private async grabConfirmed(editor: Editor): Promise<Selection | null> {
+    const sel = this.grabChecked(editor);
+    return sel ? this.confirmSize(sel) : null;
+  }
+
+  /** Спросить про длину — для куска, который уже взяли где-то ещё. */
+  private async confirmSize(sel: Selection): Promise<Selection | null> {
+    const limit = this.settings.warnOver;
+    if (limit > 0 && sel.text.length > limit) {
+      const go = await askConfirm(
+        this.app,
+        t("tooBigTitle"),
+        t("tooBigAsk", { chars: sel.text.length, limit }),
+        t("tooBigGo"),
+      );
+      if (!go) return null;
     }
     return sel;
   }
 
-  /** Выделение, а если его нет — вся заметка или абзац под курсором. */
+  /** Выделение, а если его нет — заметка, раздел или абзац под курсором. */
   private grabSelection(editor: Editor): Selection | null {
     const selected = editor.getSelection();
     if (hasText(selected)) {
@@ -339,13 +492,33 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       };
     }
     if (this.settings.noSelection === "none") return null;
+    return this.grabScope(editor, this.settings.noSelection);
+  }
 
+  /**
+   * Кусок заметки заданного охвата. Отдельно от настройки: тот же расчёт нужен
+   * быстрому меню, которое показывает соседние охваты и даёт переключить их на
+   * один раз, не заходя в настройки.
+   */
+  private grabScope(editor: Editor, kind: ScopeKind): Selection | null {
     const last = editor.lastLine();
-    if (this.settings.noSelection === "note") {
+    if (kind === "note") {
       const from = { line: 0, ch: 0 };
       const to = { line: last, ch: editor.getLine(last).length };
       const text = editor.getRange(from, to);
       return hasText(text) ? { text, from, to, implicit: true } : null;
+    }
+
+    if (kind === "section") {
+      // Разбираем текст редактора, а не файл на диске: правим то, что набрано
+      // сию секунду, и заголовки надо считать по нему же.
+      const lines = editor.getValue().split("\n");
+      const found = sectionAt(lines, editor.getCursor().line);
+      const from = { line: found.from, ch: 0 };
+      const to = { line: found.to, ch: editor.getLine(found.to).length };
+      const text = editor.getRange(from, to);
+      if (!hasText(text)) return null;
+      return { text, from, to, implicit: true, label: sectionName(lines[found.from]) };
     }
 
     const cursor = editor.getCursor();
@@ -361,18 +534,28 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     return { text: editor.getRange(from, to), from, to, implicit: true };
   }
 
-  async runAction(action: AiAction, editor: Editor, view: MarkdownView): Promise<void> {
+  /**
+   * Прогнать действие. Готовый кусок приходит из быстрого меню — там его уже
+   * взяли и показали, и брать заново значило бы взять другой, если охват
+   * переключили.
+   */
+  async runAction(
+    action: AiAction,
+    editor: Editor,
+    view: MarkdownView,
+    ready?: Selection,
+  ): Promise<void> {
     if (this.running) {
       new Notice(t("busyBar"));
       return;
     }
-    const sel = this.grabChecked(editor);
+    const sel = ready ? await this.confirmSize(ready) : await this.grabConfirmed(editor);
     if (!sel) return;
 
     const target: EditTarget = { action, sel, filePath: view.file?.path ?? "", editor, view };
     this.lastRun = action;
 
-    const system = systemFor(action, this.settings.targetLang);
+    const system = systemFor(action);
 
     if (action.mode === "chat") {
       const chatView = await this.openChat();
@@ -380,6 +563,12 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
         display: `**${action.name}**\n\n${sel.text}`,
         system,
         fresh: true,
+        // Запрос из заметки: без инструментов правки и без заметки в контексте.
+        fromEditor: true,
+        // И берём ровно то, на что показали. Плашка в панели могла держать
+        // прошлый фрагмент — целую главу, подхваченную, когда она была
+        // выделена, — и он уезжал вместе с выделенным абзацем, за те же деньги.
+        quote: null,
       });
       return;
     }
@@ -389,7 +578,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     const controller = new AbortController();
     this.running = controller;
 
-    const entry = this.newEntry(action);
+    const entry = this.newEntry(action, sel.label);
 
     // Всё, что может бросить, — внутри try: иначе finally не отработает и
     // this.running останется занятым до перезапуска Obsidian.
@@ -425,6 +614,15 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
         new Notice(t("emptyReply"));
         return;
       }
+      // Модель упёрлась в свой предел длины и оборвала ответ на полуслове.
+      // В заметку он не пойдёт: замена выглядела бы как обычная правка, а на
+      // деле стёрла бы половину текста. Сам ответ остаётся в карточке.
+      if (result.truncated) {
+        entry.content = result.text.slice(0, LOG_PREVIEW);
+        this.finishEntry(entry, "error", t("cutOff"));
+        new Notice(t("cutOff"), 10000);
+        return;
+      }
 
       const replacement = cleanReply(result.text, sel.text);
       if (replacement === sel.text) {
@@ -454,11 +652,13 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
    * и что именно изменилось. Панель может быть закрыта, поэтому запись живёт в
    * истории, а карточка — лишь её отражение.
    */
-  private newEntry(action: AiAction): ActionEntry {
+  private newEntry(action: AiAction, scope?: string): ActionEntry {
     return {
       kind: "action",
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      action: shortName(action),
+      // Раздел взят без выделения, и на экране его границ не видно — пусть
+      // хотя бы карточка говорит, над чем шла работа.
+      action: scope ? `${shortName(action)} · ${scope}` : shortName(action),
       status: "running",
       content: "",
     };
@@ -513,6 +713,8 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       from: action.mode === "append" ? sel.to : sel.from,
       written,
       original: action.mode === "append" ? "" : sel.text,
+      source: { from: sel.from, text: sel.text },
+      action,
     });
     // Map перебирается в порядке добавления — лишнее уходит с самых старых.
     while (this.undoable.size > UNDO_LIMIT) {
@@ -555,17 +757,25 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     this.chatView?.renderAction(entry);
   }
 
+  /**
+   * Открытая заметка по пути. Проверяем тип, а не приводим к нему: в неактивной
+   * вкладке лист держит вместо вьюхи заглушку, и у неё нет ни file, ни editor.
+   */
+  private openNote(path: string): MarkdownView | null {
+    return (
+      this.app.workspace
+        .getLeavesOfType("markdown")
+        .map((leaf) => leaf.view)
+        .find((v): v is MarkdownView => v instanceof MarkdownView && v.file?.path === path) ?? null
+    );
+  }
+
   /** Возврат правки: меняем написанное обратно, если его ещё не тронули. */
   async undoAction(id: string): Promise<boolean> {
     const record = this.undoable.get(id);
     if (!record) return false;
 
-    // Проверяем тип, а не приводим к нему: в неактивной вкладке лист держит
-    // вместо вьюхи заглушку, и у неё нет ни file, ни editor.
-    const view = this.app.workspace
-      .getLeavesOfType("markdown")
-      .map((leaf) => leaf.view)
-      .find((v): v is MarkdownView => v instanceof MarkdownView && v.file?.path === record.path);
+    const view = this.openNote(record.path);
 
     // Заметку могли закрыть — тогда правим файл. Открытую правим через редактор:
     // так уцелеет несохранённое и сработает обычный Ctrl+Z.
@@ -605,21 +815,113 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     return done;
   }
 
+  /**
+   * Переделать правку: вернуть текст и прогнать по нему то же действие ещё раз.
+   * Ответ модели — вещь случайная, и «не понравилось» до сих пор означало
+   * Ctrl+Z руками плюс поиск того же действия заново.
+   */
+  async repeatAction(id: string): Promise<void> {
+    // Занятость проверяем до возврата текста: иначе правка была бы снята, а
+    // прогнать её заново runAction отказался бы — и текст остался бы прежним.
+    if (this.running) {
+      new Notice(t("busyBar"));
+      return;
+    }
+    const record = this.undoable.get(id);
+    if (!record) {
+      // Карта отмены живёт в памяти сессии и не бесконечна — старую правку
+      // переделать уже нечем.
+      new Notice(t("logUndoFail"));
+      return;
+    }
+    // Заметку нужно открыть до возврата: прогонять действие мы умеем только
+    // через редактор, а откатить и остаться ни с чем — плохая мена.
+    const view = this.openNote(record.path);
+    if (!view) {
+      new Notice(t("logRepeatOpen"));
+      return;
+    }
+    if (!(await this.undoAction(id))) {
+      new Notice(t("logUndoFail"));
+      return;
+    }
+
+    // Старая карточка сразу становится отменённой: возврат уже случился, а
+    // новая правка ляжет отдельной записью ниже.
+    const entry = this.history.find(
+      (item): item is ActionEntry => isActionEntry(item) && item.id === id,
+    );
+    if (entry) {
+      entry.undone = true;
+      this.persistHistory();
+      this.chatView?.renderAction(entry);
+    }
+
+    const editor = view.editor;
+    const { from, text } = record.source;
+    const to = editor.offsetToPos(editor.posToOffset(from) + text.length);
+    // Та же проверка, что и при возврате: работаем, только если на месте лежит
+    // ровно тот текст, ради которого всё затевалось.
+    if (editor.getRange(from, to) !== text) {
+      new Notice(t("logUndoFail"));
+      return;
+    }
+    editor.setSelection(from, to);
+    await this.runAction(record.action, editor, view);
+  }
+
   stopAction(): void {
     this.running?.abort();
   }
 
   /** Окно над выделением: пресеты на цифрах плюс поле для своего промпта. */
   private openQuickMenu(editor: Editor, view: MarkdownView): void {
-    const sel = this.grabChecked(editor);
-    if (!sel) return;
+    const sel = this.grabSelection(editor);
+    const implicit = !sel || sel.implicit;
+
+    // Кусок взят по настройке — считаем и соседние охваты: в окне их видно
+    // размером, и передумать можно на месте, не заходя в настройки. Режим
+    // «ничего» обещает не работать без выделения, и предлагать тут нечего.
+    const grabbed = new Map<string, Selection>();
+    const scopes: QuickScope[] = [];
+    if (implicit && this.settings.noSelection !== "none") {
+      for (const kind of SCOPES) {
+        const found = this.grabScope(editor, kind);
+        // Одинаковые куски в ряд не ставим: в заметке без заголовков раздел —
+        // это она сама, и две кнопки об одном и том же только путают.
+        if (!found || scopes.some((s) => s.text === found.text)) continue;
+        grabbed.set(kind, found);
+        scopes.push({ kind, label: t(SCOPE_LABEL[kind]), text: found.text });
+      }
+    }
+
+    // Настройка могла не дать ничего — курсор на пустой строке при «абзаце», —
+    // но раздел или заметка под ним есть: меню открываем, начав с них.
+    const base = sel ?? (scopes.length ? grabbed.get(scopes[0].kind) ?? null : null);
+    if (!base) {
+      new Notice(t("noSelection"));
+      return;
+    }
+
+    // Выбран тот охват, что стоит в настройках; если его вытеснил такой же по
+    // тексту — то, что от него осталось в ряду.
+    let current = scopes.find((s) => s.text === base.text)?.kind ?? "";
+    const taken = (): Selection => grabbed.get(current) ?? base;
+
+    // Курсор до открытия меню: если ничего не запустят, вернём его на место.
+    const cursor = editor.getCursor();
+    const show = () => {
+      const { from, to } = taken();
+      editor.setSelection(from, to);
+    };
+    if (implicit) show();
 
     const presets = this.settings.quickSlots.map((id) => {
       if (id === QUICK_ASK) {
         return {
           label: t("cmdSendSelection"),
           icon: "message-circle-question",
-          run: () => void this.askAboutSelection(editor),
+          run: () => void this.askAboutSelection(editor, taken()),
         };
       }
       const action = this.settings.actions.find((a) => a.id === id);
@@ -627,15 +929,26 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       return {
         label: action.name,
         icon: action.icon,
-        run: () => void this.runAction(action, editor, view),
+        run: () => void this.runAction(action, editor, view, taken()),
       };
     });
 
     new QuickMenu(this.app, {
       presets,
-      selection: sel.text,
+      selection: base.text,
+      scopes,
+      scope: current,
       recent: this.settings.recentPrompts,
-      onPrompt: (prompt, toChat) => void this.runPrompt(prompt, toChat, editor, view),
+      onScope: (kind) => {
+        current = kind;
+        show();
+      },
+      onCancel: () => {
+        // Ничего не запустили — снимаем подсветку: меню не должно оставлять
+        // после себя выделение, которого пользователь не делал.
+        if (implicit) editor.setSelection(cursor, cursor);
+      },
+      onPrompt: (prompt, toChat) => void this.runPrompt(prompt, toChat, editor, view, taken()),
     }).open();
   }
 
@@ -645,6 +958,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     toChat: boolean,
     editor: Editor,
     view: MarkdownView,
+    ready?: Selection,
   ): Promise<void> {
     const recent = [prompt, ...this.settings.recentPrompts.filter((p) => p !== prompt)];
     this.settings.recentPrompts = recent.slice(0, RECENT_LIMIT);
@@ -660,6 +974,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       },
       editor,
       view,
+      ready,
     );
   }
 
@@ -668,8 +983,8 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
    * отвечала встречным «а что с ним сделать?». Теперь он прикрепляется к полю
    * ввода: сначала вопрос, фрагмент уедет вместе с ним.
    */
-  private async askAboutSelection(editor: Editor): Promise<void> {
-    const sel = this.grabChecked(editor);
+  private async askAboutSelection(editor: Editor, ready?: Selection): Promise<void> {
+    const sel = ready ? await this.confirmSize(ready) : await this.grabConfirmed(editor);
     if (!sel) return;
     const chatView = await this.openChat();
     chatView.takeSelection(sel.text);
@@ -715,14 +1030,11 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
 
   apiConfig(): ApiConfig {
     return {
-      kind: this.settings.kind,
       baseUrl: this.settings.baseUrl,
       apiKey: this.settings.apiKey,
       model: this.settings.model,
       temperature: this.settings.temperature,
       maxTokens: this.settings.maxTokens,
-      thinking: this.settings.thinking,
-      reasoningEffort: this.settings.reasoningEffort,
     };
   }
 
@@ -897,7 +1209,13 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
 
   /** Открыть панель по кнопке: молча провалиться тут хуже, чем сказать вслух. */
   private showChat(): void {
-    this.openChat().catch((e) => new Notice(String(e instanceof Error ? e.message : e)));
+    this.openChat()
+      // Панель открывают, чтобы спросить, — курсор сразу в поле ввода. На
+      // телефоне так лезет клавиатура на пол-экрана, и это уже помеха.
+      .then((view) => {
+        if (!Platform.isMobile) view.focusInput();
+      })
+      .catch((e) => new Notice(String(e instanceof Error ? e.message : e)));
   }
 
   async openChat(): Promise<ChatView> {

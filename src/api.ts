@@ -45,7 +45,11 @@ interface WireDelta {
 
 export interface WireChunk {
   usage?: WireUsage;
-  choices?: { delta?: WireDelta; message?: WireDelta }[];
+  /**
+   * finish_reason приезжает в последнем чанке: "stop" — модель договорила,
+   * "length" — упёрлась в свой предел и оборвала ответ на полуслове.
+   */
+  choices?: { delta?: WireDelta; message?: WireDelta; finish_reason?: string | null }[];
 }
 
 /** Описание инструмента в формате OpenAI function calling. */
@@ -58,20 +62,20 @@ export interface ToolSpec {
   };
 }
 
-/** Какого рода эндпоинт: у DeepSeek есть свои поля сверх OpenAI-формата. */
+/**
+ * Какого рода эндпоинт. Своих полей сверх OpenAI-формата у плагина сейчас нет
+ * ни для кого — вид провайдера остался пометкой в пресетах, на запрос он не
+ * влияет.
+ */
 export type ProviderKind = "deepseek" | "openai";
 
 export interface ApiConfig {
-  kind: ProviderKind;
   baseUrl: string;
   apiKey: string;
   model: string;
   temperature: number;
   /** 0 — не ограничивать (решает сервер). */
   maxTokens: number;
-  /** Режим размышления DeepSeek; на openai-совместимых игнорируется. */
-  thinking: boolean;
-  reasoningEffort: "low" | "medium" | "high";
 }
 
 export interface Usage {
@@ -85,6 +89,11 @@ export interface ChatResult {
   reasoning: string;
   usage: Usage | null;
   toolCalls: ToolCall[];
+  /**
+   * Ответ оборван на пределе длины модели. Класть такой в заметку нельзя: он
+   * заменит текст своей половиной, а выглядеть будет как обычная правка.
+   */
+  truncated: boolean;
 }
 
 export interface ChatOptions {
@@ -228,10 +237,6 @@ function body(cfg: ApiConfig, messages: ChatMessage[], opts: ChatOptions): strin
     temperature: cfg.temperature,
   };
   if (cfg.maxTokens > 0) payload.max_tokens = cfg.maxTokens;
-  if (cfg.kind === "deepseek" && cfg.thinking) {
-    payload.thinking = { type: "enabled" };
-    payload.reasoning_effort = cfg.reasoningEffort;
-  }
   if (opts.stream && opts.wantUsage) payload.stream_options = { include_usage: true };
   if (opts.tools?.length) {
     payload.tools = opts.tools;
@@ -334,7 +339,13 @@ async function plainChat(
     name: String(c.function?.name ?? ""),
     arguments: String(c.function?.arguments ?? ""),
   }));
-  return { text, reasoning, usage: readUsage(json?.usage), toolCalls };
+  return {
+    text,
+    reasoning,
+    usage: readUsage(json?.usage),
+    toolCalls,
+    truncated: json?.choices?.[0]?.finish_reason === "length",
+  };
 }
 
 /**
@@ -406,6 +417,7 @@ async function streamChat(
   let text = "";
   let reasoning = "";
   let usage: Usage | null = null;
+  let finish = "";
   const calls = new Map<number, ToolCall>();
 
   try {
@@ -417,6 +429,10 @@ async function streamChat(
 
       buffer = drainSse(buffer, (chunk) => {
         if (chunk.usage) usage = readUsage(chunk.usage);
+        // Причина остановки приезжает в последнем чанке — с пустой дельтой,
+        // поэтому читаем её до проверки на дельту.
+        const reason = chunk.choices?.[0]?.finish_reason;
+        if (reason) finish = reason;
         const delta = chunk.choices?.[0]?.delta;
         if (!delta) return;
         collectToolCalls(delta, calls);
@@ -437,7 +453,7 @@ async function streamChat(
       // Остановка по кнопке — не ошибка: отдаём то, что успело прийти.
       // Недособранные вызовы инструментов при этом выбрасываем: половина
       // JSON-аргументов хуже, чем ничего.
-      return { text, reasoning, usage, toolCalls: [] };
+      return { text, reasoning, usage, toolCalls: [], truncated: false };
     }
     throw new ApiError(t("errStreamBroken") + " " + (e instanceof Error ? e.message : String(e)));
   } finally {
@@ -445,7 +461,7 @@ async function streamChat(
     reader.releaseLock();
   }
 
-  return { text, reasoning, usage, toolCalls: [...calls.values()] };
+  return { text, reasoning, usage, toolCalls: [...calls.values()], truncated: finish === "length" };
 }
 
 /**

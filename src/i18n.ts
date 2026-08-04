@@ -47,16 +47,23 @@ const en = {
   cmdSendSelection: "Ask about the selection",
   cmdRepeat: "Repeat the last action",
   cmdQuick: "Quick menu over the selection",
+  menuQuick: "AI quick menu",
+  menuAsk: "Ask the AI about the selection",
   quickTitle: "What to do with the text",
   quickPlaceholder: "Write your own instruction…",
-  quickHint: "A digit — a preset · Enter — rewrite the text · Ctrl+Enter — answer in the chat · ↑ — previous prompts",
-  quickHintMac: "A digit — a preset · Enter — rewrite the text · ⌘Enter — answer in the chat · ↑ — previous prompts",
+  quickHint: "A digit — a preset · Enter — answer in the chat · Ctrl+Enter — rewrite the text · ↑ — previous prompts",
+  quickHintMac: "A digit — a preset · Enter — answer in the chat · ⌘Enter — rewrite the text · ↑ — previous prompts",
+  quickHintScope: "← → — how much to take",
+  scopeNote: "The note",
+  scopeSection: "The section",
+  scopeParagraph: "The paragraph",
   quickHead: "Quick menu",
   quickDesc:
     "The quick menu opens a window over the selected text: type your own instruction, or press " +
     "a digit for a preset. The digit only picks a preset while the field is empty, so a prompt " +
     "can start with a number. The physical key matters, not the character, so any layout " +
-    "works.\n\n" +
+    "works. With nothing selected the menu also shows what it took — paragraph, section or " +
+    "note — and the arrow keys change it for that one run.\n\n" +
     "There are five keys to begin with, and up to nine if you add them. Drag a row by its " +
     "handle to move an action to another key. The pencil opens the action itself: name, icon, " +
     "prompt and what to do with the answer. An action taken off a key is not lost: it keeps " +
@@ -149,6 +156,8 @@ const en = {
   logNothing: "nothing to change",
   logFailed: "failed",
   logUndo: "Undo the edit",
+  logRepeat: "Run it again",
+  logRepeatOpen: "Open the note to run the edit again",
   logUndone: "undone",
   logUndoFail: "The text has changed since — undoing it now would break things",
   logMore: "and more: {added} added, {removed} removed",
@@ -158,7 +167,6 @@ const en = {
   actDeleteConfirm: "Delete “{name}”? The prompt will be lost.",
   actName: "Name",
   actPrompt: "Prompt",
-  actPromptDesc: "{lang} is replaced with the translation language from the settings",
   actMode: "What to do with the answer",
   actModeDesc: "Replacing and appending edit the note; Ctrl+Z undoes it as usual",
   actModeReplace: "Replace the text",
@@ -180,21 +188,35 @@ const en = {
   chatSave: "Save the chat to a note",
   chatNothingToSave: "There is no conversation to save yet",
   chatNoteTitle: "Chat {when}",
+  chatNoteTitleAsk: "Chat — {ask}",
   chatNoteHead: "{model}, {when}",
   chatToBottom: "Scroll to the bottom",
+  chatAgain: "Ask again",
+  chatAgainLast: "Only the last answer can be asked again",
+  chatNoQuestion: "There is no question above this answer",
+  chatEditAsk: "Edit the question",
+  chatDrop: "Remove",
+  chatDropped: "Removed from the conversation",
+  chatCutTail: "Everything after the question was removed too",
   setFresh: "Start with an empty chat",
   setFreshDesc:
     "When Obsidian starts, the panel opens empty and yesterday's conversation is dropped. Save what you need to a note first.",
   noSelection: "Select the text to work on",
-  tooBig: "The note is too long ({chars} characters, limit {limit}) — select the part to work on",
+  tooBigTitle: "That is a lot of text",
+  tooBigAsk:
+    "{chars} characters are about to go to the model — more than your threshold of {limit}. " +
+    "Send it?",
+  tooBigGo: "Send",
+  cutOff:
+    "The model ran out of room and cut the answer off mid-sentence. It is not going into the note — " +
+    "it would replace your text with half of it. The answer is below: take what you need by hand.",
+  chatCutOff: "The model hit its length limit and cut the answer off.",
   stale: "The text changed while the model was working, so nothing was replaced. The answer is below — copy it by hand if you still need it.",
   emptyReply: "The model returned an empty answer",
   applied: "{action}: done",
   unchanged: "{action}: nothing to change",
   aborted: "Stopped",
   nothingToRepeat: "Nothing to repeat yet",
-  askLangPlaceholder: "English, Deutsch, 中文…",
-  defaultLang: "English",
 
   // ——— настройки ———
   setProviderHead: "Model",
@@ -240,23 +262,22 @@ const en = {
   setStreamDesc:
     "Show the answer as it is generated. Turn off if your provider blocks streaming " +
     "requests from the app.",
-  setThinking: "Thinking mode",
-  setThinkingDesc:
-    "The model reasons before answering: better for evaluation and hard questions, " +
-    "slower and pricier for proofreading. DeepSeek only.",
-  setEffort: "Depth of reasoning",
-  setEffortLow: "Low",
-  setEffortMedium: "Medium",
-  setEffortHigh: "High",
-  setLang: "Translation language",
-  setLangDesc: "What {lang} in an action prompt resolves to.",
   setNoSelection: "When nothing is selected",
   setNoSelectionDesc:
     "What an action works on if you did not select anything. The whole note is the handy default " +
-    "— just mind that a long note costs more tokens per request.",
+    "— just mind that a long note costs more tokens per request. A section runs from the heading " +
+    "above the cursor down to the next one of the same level, subsections included; the heading " +
+    "itself goes along, so the model knows what the text is about.",
   setNoSelectionNote: "The whole note",
+  setNoSelectionSection: "The section under the cursor",
   setNoSelectionParagraph: "The paragraph under the cursor",
   setNoSelectionNone: "Nothing — ask to select",
+  setWarnOver: "Ask when the text is longer than",
+  setWarnOverDesc:
+    "A threshold in characters: anything longer goes to the model only after a question — both " +
+    "when you selected the piece yourself and when the plugin took the note or the section for " +
+    "you. A long piece costs more and takes longer, and the question is a chance to change your " +
+    "mind. 0 never asks.",
   setSystem: "System prompt",
   setSystemDesc: "Added to every request — tell the model who it is talking to and how.",
   setSystemPlaceholder: "You are helping to write and edit notes in Obsidian.",
@@ -269,6 +290,13 @@ const en = {
     "Off, the plugin claims no keys at all: open the quick menu from the command palette, or bind " +
     "whatever suits you in the hotkey settings. Your own binding beats this default either way.",
   setHotkeyReload: "The hotkey changes once the plugin is reloaded (or Obsidian restarts).",
+  setEditorMenu: "Right-click on the selection",
+  setEditorMenuDesc:
+    "What the editor context menu offers while text is selected — on a phone it is the same menu, " +
+    "held down. With nothing selected the plugin adds nothing to it.",
+  setMenuNone: "Nothing",
+  setMenuQuick: "The quick menu and the chat",
+  setMenuActions: "The actions on the keys as well",
   setUsage: "Show token usage",
   setUsageDesc: "Print how many tokens each answer cost under it.",
 
@@ -348,15 +376,23 @@ const ru: typeof en = {
   cmdSendSelection: "Спросить о выделенном",
   cmdRepeat: "Повторить последнее действие",
   cmdQuick: "Быстрое меню над выделением",
+  menuQuick: "Быстрое меню ИИ",
+  menuAsk: "Спросить ИИ о выделенном",
   quickTitle: "Что сделать с текстом",
   quickPlaceholder: "Напиши, что сделать…",
-  quickHint: "Цифра — готовое · Enter — переписать текст · Ctrl+Enter — ответ в чат · ↑ — прошлые промпты",
-  quickHintMac: "Цифра — готовое · Enter — переписать текст · ⌘Enter — ответ в чат · ↑ — прошлые промпты",
+  quickHint: "Цифра — готовое · Enter — ответ в чат · Ctrl+Enter — переписать текст · ↑ — прошлые промпты",
+  quickHintMac: "Цифра — готовое · Enter — ответ в чат · ⌘Enter — переписать текст · ↑ — прошлые промпты",
+  quickHintScope: "← → — сколько брать",
+  scopeNote: "Заметка",
+  scopeSection: "Раздел",
+  scopeParagraph: "Абзац",
   quickHead: "Быстрое меню",
   quickDesc:
     "Быстрое меню открывает окно над выделенным текстом: пиши свою инструкцию или жми цифру " +
     "для готового действия. Цифра выбирает действие, только пока поле пустое, — так промпт " +
-    "может начинаться с числа. Клавиша считается физическая, так что раскладка не мешает.\n\n" +
+    "может начинаться с числа. Клавиша считается физическая, так что раскладка не мешает. " +
+    "Когда ничего не выделено, меню показывает, что оно взяло — абзац, раздел или заметку, — " +
+    "и стрелки вбок меняют это на один раз.\n\n" +
     "Клавиш сразу пять, а если мало — добавь ещё, до девяти. Строку можно перетащить за ручку: " +
     "так действие переезжает на другую клавишу. Карандаш открывает само действие: название, " +
     "иконка, промпт и что делать с ответом. Снятое с клавиши действие не пропадает: у него " +
@@ -449,6 +485,8 @@ const ru: typeof en = {
   logNothing: "менять нечего",
   logFailed: "не вышло",
   logUndo: "Отменить правку",
+  logRepeat: "Ещё раз",
+  logRepeatOpen: "Открой заметку, чтобы переделать правку",
   logUndone: "отменено",
   logUndoFail: "Текст с тех пор изменился — возвращать вслепую нельзя",
   logMore: "и ещё: добавлено {added}, убрано {removed}",
@@ -458,7 +496,6 @@ const ru: typeof en = {
   actDeleteConfirm: "Удалить «{name}»? Промпт пропадёт.",
   actName: "Название",
   actPrompt: "Промпт",
-  actPromptDesc: "{lang} подставляется языком перевода из настроек",
   actMode: "Что делать с ответом",
   actModeDesc: "Замена и дописывание правят заметку; отменяется обычным Ctrl+Z",
   actModeReplace: "Заменить текст",
@@ -480,21 +517,33 @@ const ru: typeof en = {
   chatSave: "Сохранить чат в заметку",
   chatNothingToSave: "Разговора, который стоит сохранить, ещё нет",
   chatNoteTitle: "Чат {when}",
+  chatNoteTitleAsk: "Чат — {ask}",
   chatNoteHead: "{model}, {when}",
   chatToBottom: "Вниз",
+  chatAgain: "Спросить заново",
+  chatAgainLast: "Заново спрашивается только последний ответ",
+  chatNoQuestion: "Над этим ответом нет вопроса",
+  chatEditAsk: "Изменить вопрос",
+  chatDrop: "Убрать",
+  chatDropped: "Убрано из разговора",
+  chatCutTail: "Вместе с вопросом снято и всё, что было после него",
   setFresh: "Начинать с пустого чата",
   setFreshDesc:
     "При запуске Obsidian панель открывается пустой, вчерашний разговор не подхватывается. Что нужно — сохрани в заметку заранее.",
   noSelection: "Выдели текст, с которым работать",
-  tooBig: "Заметка слишком длинная ({chars} символов, предел {limit}) — выдели кусок, с которым работать",
+  tooBigTitle: "Много текста",
+  tooBigAsk: "В модель уйдёт {chars} знаков — больше твоего порога в {limit}. Отправлять?",
+  tooBigGo: "Отправить",
+  cutOff:
+    "Модель упёрлась в свой предел длины и оборвала ответ на полуслове. В заметку он не пойдёт — " +
+    "заменил бы твой текст его половиной. Ответ ниже: забери руками, что нужно.",
+  chatCutOff: "Модель упёрлась в предел длины и оборвала ответ.",
   stale: "Пока модель работала, текст изменился, и замены не было. Ответ ниже — если он ещё нужен, перенеси руками.",
   emptyReply: "Модель вернула пустой ответ",
   applied: "{action}: готово",
   unchanged: "{action}: менять нечего",
   aborted: "Остановлено",
   nothingToRepeat: "Повторять пока нечего",
-  askLangPlaceholder: "английский, немецкий, 中文…",
-  defaultLang: "английский",
 
   // ——— настройки ———
   setProviderHead: "Модель",
@@ -541,23 +590,21 @@ const ru: typeof en = {
   setStreamDesc:
     "Текст появляется на ходу. Выключи, если провайдер не пропускает потоковые запросы " +
     "из приложения.",
-  setThinking: "Режим размышления",
-  setThinkingDesc:
-    "Модель рассуждает перед ответом: лучше для оценки и сложных вопросов, " +
-    "медленнее и дороже для вычитки. Только у DeepSeek.",
-  setEffort: "Глубина размышления",
-  setEffortLow: "Небольшая",
-  setEffortMedium: "Средняя",
-  setEffortHigh: "Максимальная",
-  setLang: "Язык перевода",
-  setLangDesc: "Во что превращается {lang} в промпте действия.",
   setNoSelection: "Если ничего не выделено",
   setNoSelectionDesc:
     "С чем работает действие, когда выделения нет. Вся заметка — самый удобный вариант, только " +
-    "помни, что длинная заметка стоит дороже в токенах.",
+    "помни, что длинная заметка стоит дороже в токенах. Раздел — это от заголовка над курсором " +
+    "до следующего того же уровня, вместе с подразделами; сам заголовок уезжает с текстом, чтобы " +
+    "модель знала, о чём он.",
   setNoSelectionNote: "Вся заметка",
+  setNoSelectionSection: "Раздел под курсором",
   setNoSelectionParagraph: "Абзац под курсором",
   setNoSelectionNone: "Ничего — просить выделить",
+  setWarnOver: "Спрашивать, если текста больше",
+  setWarnOverDesc:
+    "Порог в знаках: всё, что длиннее, уходит в модель только после вопроса — и когда ты выделил " +
+    "кусок сам, и когда плагин взял за тебя заметку или раздел. Длинный кусок стоит дороже и " +
+    "делается дольше, а вопрос — это возможность передумать. 0 — не спрашивать никогда.",
   setSystem: "Системный промпт",
   setSystemDesc: "Добавляется к каждому запросу — скажи модели, с кем и как она говорит.",
   setSystemPlaceholder: "Ты помогаешь писать и править заметки в Obsidian.",
@@ -570,6 +617,13 @@ const ru: typeof en = {
     "Выключено — плагин не занимает клавиш вовсе: быстрое меню открывается из палитры команд, а " +
     "хоткей на него вешается свой, какой удобно. Своё назначение сильнее умолчания в любом случае.",
   setHotkeyReload: "Клавиша изменится после перезагрузки плагина (или перезапуска Obsidian).",
+  setEditorMenu: "Правая кнопка по выделению",
+  setEditorMenuDesc:
+    "Что предлагает контекстное меню редактора, пока текст выделен, — на телефоне это то же меню, " +
+    "по долгому нажатию. Без выделения плагин в меню не добавляет ничего.",
+  setMenuNone: "Ничего",
+  setMenuQuick: "Быстрое меню и чат",
+  setMenuActions: "И действия с клавиш",
   setUsage: "Показывать расход токенов",
   setUsageDesc: "Под ответом выводится, во сколько токенов он обошёлся.",
 

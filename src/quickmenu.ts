@@ -20,12 +20,35 @@ export interface QuickPreset {
   run: () => void;
 }
 
+/** Кусок заметки, который можно взять в работу: абзац, раздел, вся заметка. */
+export interface QuickScope {
+  /** Те же значения, что у настройки «если ничего не выделено». */
+  kind: string;
+  label: string;
+  text: string;
+}
+
 export interface QuickMenuOptions {
   presets: (QuickPreset | null)[];
   /** Текст, к которому всё применится, — показываем, чтобы не гадать. */
   selection: string;
+  /**
+   * Чем можно заменить взятый кусок, когда выделения не было. Пусто — работаем
+   * с выделенным, и менять тут нечего.
+   */
+  scopes: QuickScope[];
+  /** Что из этого выбрано сейчас: по умолчанию — то, что стоит в настройках. */
+  scope: string;
   recent: string[];
+  onScope: (kind: string) => void;
+  /** Окно закрыли, ничего не запустив. */
+  onCancel: () => void;
   onPrompt: (prompt: string, toChat: boolean) => void;
+}
+
+/** Тысячи неразрывным пробелом: «27 600» читается, «27600» — считается. */
+function grouped(n: number): string {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 }
 
 /**
@@ -36,22 +59,29 @@ export interface QuickMenuOptions {
 export class QuickMenu extends Modal {
   private input!: HTMLTextAreaElement;
   private recentIndex = -1;
+  /** Какой кусок берём сейчас; пустая строка — работаем с выделенным. */
+  private chosen = "";
+  private scopesEl: HTMLElement | null = null;
+  private previewEl: HTMLElement | null = null;
+  /** Что-то запустили — значит закрытие окна отменой не считается. */
+  private started = false;
 
   constructor(app: App, private opts: QuickMenuOptions) {
     super(app);
+    this.chosen = opts.scope;
   }
 
   onOpen(): void {
     this.modalEl.addClass("ai-quick-modal");
     this.titleEl.setText(t("quickTitle"));
 
-    const preview = this.opts.selection.replace(/\s+/g, " ").trim();
-    if (preview) {
-      this.contentEl.createDiv({
-        cls: "ai-quick-selection",
-        text: preview.length > 160 ? preview.slice(0, 160) + "…" : preview,
-      });
+    // Выделения не было, и плагин взял кусок сам — покажем, какой именно, и
+    // дадим передумать не заходя в настройки.
+    if (this.opts.scopes.length > 1) {
+      this.scopesEl = this.contentEl.createDiv({ cls: "ai-quick-scopes" });
     }
+    this.previewEl = this.contentEl.createDiv({ cls: "ai-quick-selection" });
+    this.paintScopes();
 
     // Список, а не ряд кнопок: названия у действий разной длины, и в строку они
     // выстраиваются рвано.
@@ -63,6 +93,7 @@ export class QuickMenu extends Modal {
       setIcon(row.createSpan({ cls: "ai-quick-icon" }), preset.icon);
       row.createSpan({ cls: "ai-quick-item-label", text: preset.label });
       row.onclick = () => {
+        this.started = true;
         this.close();
         preset.run();
       };
@@ -74,12 +105,54 @@ export class QuickMenu extends Modal {
     });
     this.input.addEventListener("keydown", (e) => this.onKey(e));
 
+    const hint = Platform.isMacOS ? t("quickHintMac") : t("quickHint");
     this.contentEl.createDiv({
       cls: "ai-quick-hint",
-      text: Platform.isMacOS ? t("quickHintMac") : t("quickHint"),
+      text: this.opts.scopes.length > 1 ? `${hint} · ${t("quickHintScope")}` : hint,
     });
 
     window.setTimeout(() => this.input.focus(), 0);
+  }
+
+  /** Кнопки охвата и текст под ними: рисуются заново на каждую смену. */
+  private paintScopes(): void {
+    const current = this.opts.scopes.find((s) => s.kind === this.chosen);
+
+    if (this.scopesEl) {
+      this.scopesEl.empty();
+      for (const scope of this.opts.scopes) {
+        const btn = this.scopesEl.createEl("button", { cls: "ai-quick-scope" });
+        btn.createSpan({ text: scope.label });
+        btn.createSpan({ cls: "ai-quick-scope-size", text: grouped(scope.text.length) });
+        btn.toggleClass("is-active", scope.kind === this.chosen);
+        btn.onclick = () => this.pick(scope.kind);
+      }
+    }
+
+    if (!this.previewEl) return;
+    const source = current ? current.text : this.opts.selection;
+    const preview = source.replace(/\s+/g, " ").trim();
+    this.previewEl.setText(preview.length > 160 ? preview.slice(0, 160) + "…" : preview);
+    this.previewEl.toggle(preview.length > 0);
+  }
+
+  private pick(kind: string): void {
+    if (kind === this.chosen) return;
+    this.chosen = kind;
+    this.paintScopes();
+    // Выделение в заметке едет следом: видно, что именно уйдёт в модель.
+    this.opts.onScope(kind);
+  }
+
+  /** Соседний охват: стрелки ходят по ряду, не выходя за края. */
+  private step(dir: 1 | -1): boolean {
+    const list = this.opts.scopes;
+    if (list.length < 2) return false;
+    const at = list.findIndex((s) => s.kind === this.chosen);
+    const next = Math.min(Math.max(at + dir, 0), list.length - 1);
+    if (next === at) return true; // край ряда: стрелку всё равно съедаем
+    this.pick(list[next].kind);
+    return true;
   }
 
   private onKey(e: KeyboardEvent): void {
@@ -90,9 +163,18 @@ export class QuickMenu extends Modal {
       const preset = i === -1 ? null : this.opts.presets[i];
       if (preset && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
+        this.started = true;
         this.close();
         preset.run();
         return;
+      }
+      // По тому же правилу — стрелки вбок меняют охват: в пустом поле им всё
+      // равно нечего двигать.
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        if (this.step(e.key === "ArrowRight" ? 1 : -1)) {
+          e.preventDefault();
+          return;
+        }
       }
     }
 
@@ -100,8 +182,12 @@ export class QuickMenu extends Modal {
       e.preventDefault();
       const prompt = this.input.value.trim();
       if (!prompt) return;
+      this.started = true;
       this.close();
-      this.opts.onPrompt(prompt, e.ctrlKey || e.metaKey);
+      // Enter отвечает в чате, и только Ctrl+Enter правит заметку. Наоборот
+      // было опаснее: «перескажи главу», набранное сгоряча, стирало главу
+      // пересказом — а Enter жмут не глядя.
+      this.opts.onPrompt(prompt, !(e.ctrlKey || e.metaKey));
       return;
     }
 
@@ -122,5 +208,6 @@ export class QuickMenu extends Modal {
 
   onClose(): void {
     this.contentEl.empty();
+    if (!this.started) this.opts.onCancel();
   }
 }

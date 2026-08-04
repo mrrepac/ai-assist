@@ -27,7 +27,6 @@ export class ActionModal extends Modal {
 
     new Setting(this.contentEl)
       .setName(t("actPrompt"))
-      .setDesc(t("actPromptDesc"))
       .setClass("ai-setting-stacked")
       .addTextArea((c) => {
         c.setValue(this.draft.prompt).onChange((v) => (this.draft.prompt = v));
@@ -108,12 +107,17 @@ export class ActionModal extends Modal {
 
 /** Спросить перед тем, что не отменяется. */
 export class ConfirmModal extends Modal {
+  /** Согласились — значит закрытие окна отказом уже не считается. */
+  private decided = false;
+
   constructor(
     app: App,
     private title: string,
     private message: string,
     private confirmText: string,
     private onConfirm: () => void,
+    /** Отказ: и кнопка «Отмена», и крестик, и Esc — одно и то же. */
+    private onCancel?: () => void,
   ) {
     super(app);
   }
@@ -128,6 +132,7 @@ export class ConfirmModal extends Modal {
           .setButtonText(this.confirmText)
           .setWarning()
           .onClick(() => {
+            this.decided = true;
             this.close();
             this.onConfirm();
           }),
@@ -136,7 +141,30 @@ export class ConfirmModal extends Modal {
 
   onClose(): void {
     this.contentEl.empty();
+    if (!this.decided) this.onCancel?.();
   }
+}
+
+/**
+ * То же согласие, но обещанием: спрашивая посреди работы, ответ надо дождаться,
+ * а не продолжать мимо него.
+ */
+export function askConfirm(
+  app: App,
+  title: string,
+  message: string,
+  confirmText: string,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    new ConfirmModal(
+      app,
+      title,
+      message,
+      confirmText,
+      () => resolve(true),
+      () => resolve(false),
+    ).open();
+  });
 }
 
 /** Выбор модели из того, что отдал провайдер. */
