@@ -13,18 +13,20 @@ import { DiffResult, diffWords } from "./diff";
 import { contextWindow, messageText } from "./history";
 import { t } from "./i18n";
 import { ModelSuggestModal } from "./modals";
-import { RECENT_LIMIT } from "./quickmenu";
+import { RECENT_LIMIT, grouped } from "./quickmenu";
 import { ParsedCall, ToolHost, parseCall, runCall, toolSpecs } from "./tools";
 import {
   ActionEntry,
   AiAssistSettings,
   HistoryItem,
+  ProviderProfile,
   StoredChatMessage,
+  configFor,
   isActionEntry,
   providerLabel,
   providerOf,
   providerRank,
-  streamAvailable,
+  streamAllowed,
   switchProvider,
 } from "./types";
 
@@ -37,6 +39,11 @@ const CLIPPED = "[The note is longer than this — only the beginning is shown.]
 /** Реплика пользователя: не ответ модели и не запись журнала правок. */
 function isAsk(item: HistoryItem): boolean {
   return !isActionEntry(item) && item.role === "user";
+}
+
+/** Знаки покрупному, для подписи на кнопке: 840, 12к, 148к. Точное — в подсказке. */
+function brief(n: number): string {
+  return n < 1000 ? String(n) : t("chatCtxK", { n: Math.round(n / 1000) });
 }
 
 export const VIEW_TYPE_CHAT = "ai-assist-chat";
@@ -58,8 +65,8 @@ export interface ChatHost extends ToolHost {
   saveChat(): Promise<void>;
   /** Вернуть заметку к тому, что было до правки. false — уже не получится. */
   undoAction(id: string): Promise<boolean>;
-  /** Вернуть текст и прогнать по нему то же действие ещё раз. */
-  repeatAction(id: string): Promise<void>;
+  /** Вернуть текст и прогнать по нему то же действие ещё раз, можно и другой моделью. */
+  repeatAction(id: string, config?: ApiConfig): Promise<void>;
   /** Прервать идущую правку выделенного. */
   stopAction(): void;
   /** Текст активной заметки, если контекст включён; clipped — отдано началом. */
@@ -90,6 +97,11 @@ export interface SubmitOptions {
    * Так повторный запрос уходит ровно тем же, каким был.
    */
   quote?: string | null;
+  /**
+   * Чем спрашивать, если не тем, что стоит в настройках. Так «ещё раз» умеет
+   * позвать другую модель, не переключая на неё плагин.
+   */
+  config?: ApiConfig;
 }
 
 export class ChatView extends ItemView {
@@ -98,6 +110,12 @@ export class ChatView extends ItemView {
   private sendBtn!: HTMLButtonElement;
   private downEl!: HTMLButtonElement;
   private attachEl!: HTMLElement;
+  /** Кнопка «заметку в контекст»: на ней же видно, сколько знаков уедет. */
+  private ctxEl!: HTMLButtonElement;
+  /** Метка приватного чата в шапке — вместо кнопки заметки, которой там нет. */
+  private privateEl!: HTMLElement;
+  /** Общий расход за разговор — строкой под полем ввода. */
+  private totalEl!: HTMLElement;
   private controller: AbortController | null = null;
   /** Карточки журнала по id записи — чтобы обновлять их на ходу, а не рисовать заново. */
   private actionEls = new Map<string, HTMLElement>();
@@ -140,17 +158,20 @@ export class ChatView extends ItemView {
     model.setAttr("aria-label", t("chatPickModel"));
     model.onclick = (e) => this.openModelMenu(e);
 
-    const ctx = bar.createEl("button", { cls: "ai-bar-btn clickable-icon" });
-    setIcon(ctx, "file-text");
-    ctx.setAttr("aria-label", t("chatContextNote"));
-    ctx.toggleClass("is-active", this.host.settings.chatContextNote);
-    ctx.onclick = () => {
+    this.ctxEl = bar.createEl("button", { cls: "ai-bar-btn ai-bar-ctx clickable-icon" });
+    this.ctxEl.onclick = () => {
       this.host.settings.chatContextNote = !this.host.settings.chatContextNote;
-      ctx.toggleClass("is-active", this.host.settings.chatContextNote);
+      this.paintReach();
       // Это настройка, а не лента: пишется в data.json. Через persistHistory
       // значение оседало только в памяти и к следующему запуску пропадало.
       void this.host.saveSettings();
     };
+
+    // Метка приватного чата встаёт на место кнопки заметки — и не кнопкой: режим
+    // выбирается, когда разговор заводят, и посреди него не переключается.
+    this.privateEl = bar.createSpan({ cls: "ai-bar-private" });
+    setIcon(this.privateEl, "unplug");
+    this.paintReach();
     const more = bar.createEl("button", { cls: "ai-bar-btn clickable-icon" });
     setIcon(more, "ellipsis");
     more.setAttr("aria-label", t("chatMore"));
@@ -192,8 +213,14 @@ export class ChatView extends ItemView {
     this.attachEl.hide();
 
     // Выделили в заметке и пришли сюда — момент перехода и есть смена активного
-    // листа. Плюс фокус: в панель попадают и не меняя лист.
-    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.catchSelection()));
+    // листа. Плюс фокус: в панель попадают и не меняя лист. Заодно пересчитываем
+    // контекст: заметка сменилась — сменился и размер того, что уедет.
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => {
+        this.catchSelection();
+        this.paintReach();
+      }),
+    );
     this.registerDomEvent(root, "focusin", () => this.catchSelection());
     this.catchSelection();
 
@@ -227,6 +254,11 @@ export class ChatView extends ItemView {
       else void this.send();
     };
 
+    // Счёт за разговор — последней строкой подвала: под каждым ответом видна
+    // только его цена, а сколько набежало всего, до сих пор нигде не считалось.
+    this.totalEl = foot.createDiv({ cls: "ai-total" });
+    this.paintTotal();
+
     // Восстановленный черновик может быть в несколько строк — поле подгоняем
     // под него сразу, а не при первой букве.
     this.autoGrow();
@@ -241,6 +273,63 @@ export class ChatView extends ItemView {
   refreshHeader(): void {
     const model = this.contentEl.querySelector(".ai-bar-model");
     if (model) model.textContent = this.host.settings.model;
+    this.paintReach();
+    this.paintTotal();
+  }
+
+  /**
+   * Докуда модель дотягивается — шапка целиком.
+   *
+   * Заметка вместе с ценой вопроса: пока на кнопке была одна иконка, включённой
+   * она выглядела одинаково и для строчки, и для сценария на двенадцать тысяч
+   * знаков — а уезжает он заново с каждым вопросом.
+   *
+   * В приватном чате кнопки нет вовсе: включать там нечего, и погашенная она
+   * только предлагала бы нажать на себя. Вместо неё метка — как в приватном
+   * окне браузера, чтобы видеть, где находишься, а не вспоминать.
+   */
+  private paintReach(): void {
+    // Настройки могли записать до того, как панель успела построиться.
+    if (!this.ctxEl) return;
+    const priv = this.host.settings.privateChat;
+    this.contentEl.toggleClass("is-private", priv);
+    this.ctxEl.toggle(!priv);
+    this.privateEl.toggle(priv);
+    if (priv) {
+      this.privateEl.setAttr("aria-label", t("chatPrivateOn"));
+      return;
+    }
+
+    const on = this.host.settings.chatContextNote;
+    const note = on ? this.host.noteContext() : null;
+    // Ровно то, что уйдёт в запрос: у ленты свой бюджет, и старое в него не лезет.
+    const talk = contextWindow(this.host.history).reduce((n, m) => n + messageText(m).length, 0);
+
+    this.ctxEl.empty();
+    this.ctxEl.toggleClass("is-active", on);
+    setIcon(this.ctxEl, "file-text");
+    if (note) this.ctxEl.createSpan({ cls: "ai-bar-ctx-size", text: brief(note.text.length) });
+    this.ctxEl.setAttr(
+      "aria-label",
+      note
+        ? t("chatCtxOn", { note: grouped(note.text.length), talk: grouped(talk) })
+        : t("chatCtxOff", { talk: grouped(talk) }),
+    );
+  }
+
+  /** Итог по всей ленте: и разговор, и правки выделенного — платят за всё. */
+  private paintTotal(): void {
+    if (!this.totalEl) return;
+    let prompt = 0;
+    let completion = 0;
+    for (const item of this.host.history) {
+      if (!item.usage) continue;
+      prompt += item.usage.prompt;
+      completion += item.usage.completion;
+    }
+    const show = this.host.settings.showUsage && prompt + completion > 0;
+    this.totalEl.toggle(show);
+    if (show) this.totalEl.setText(t("chatTotal", { prompt: grouped(prompt), completion: grouped(completion) }));
   }
 
   /**
@@ -279,6 +368,53 @@ export class ChatView extends ItemView {
         .setIcon("list")
         .onClick(() => void this.pickModel()),
     );
+    menu.showAtMouseEvent(e);
+  }
+
+  /**
+   * Настроенные профили в общем порядке — для меню моделей.
+   * Активный провайдер идёт отдельным пунктом, поэтому его тут нет.
+   */
+  private otherModels(): [string, ProviderProfile][] {
+    const s = this.host.settings;
+    const current = providerOf(s);
+    return Object.entries(s.profiles)
+      .filter(([name, p]) => p.model && name !== current)
+      .sort(([a], [b]) => providerRank(a) - providerRank(b) || a.localeCompare(b));
+  }
+
+  /**
+   * «Ещё раз» с выбором, чем именно. Ответ модели — вещь случайная, и чаще
+   * всего переспрашивают не от той же самой: дешёвая не справилась — дай
+   * дорогую. Выбор разовый, плагин на другую модель не переключается, иначе
+   * следующий вопрос ушёл бы туда же незаметно для спросившего.
+   *
+   * Когда настроена одна модель, выбирать не из чего — прогоняем сразу.
+   */
+  private againMenu(e: MouseEvent, run: (config?: ApiConfig) => void): void {
+    const others = this.otherModels();
+    if (others.length === 0) {
+      run();
+      return;
+    }
+
+    const menu = new Menu();
+    menu.addItem((item) =>
+      item
+        .setTitle(t("chatAgainSame", { model: this.host.settings.model }))
+        .setIcon("refresh-cw")
+        .onClick(() => run()),
+    );
+    menu.addSeparator();
+    for (const [name, profile] of others) {
+      const config = configFor(this.host.settings, name);
+      if (!config) continue;
+      menu.addItem((item) =>
+        item
+          .setTitle(`${providerLabel(name)} · ${profile.model}`)
+          .onClick(() => run(config)),
+      );
+    }
     menu.showAtMouseEvent(e);
   }
 
@@ -321,6 +457,18 @@ export class ChatView extends ItemView {
         .setIcon("file-down")
         .onClick(() => void this.host.saveChat()),
     );
+
+    // Приватный чат заводится отсюда, как приватное окно из меню браузера: своей
+    // кнопки в шапке он не заслуживает — начинают его редко, а места там нет.
+    // Обратная дорога и так на виду, кнопкой «Новый чат».
+    menu.addSeparator();
+    menu.addItem((item) =>
+      item
+        .setTitle(t("cmdPrivateChat"))
+        .setIcon("unplug")
+        .setChecked(this.host.settings.privateChat)
+        .onClick(() => this.newChat(true)),
+    );
     menu.showAtMouseEvent(e);
   }
 
@@ -331,17 +479,36 @@ export class ChatView extends ItemView {
     this.downEl.toggleClass("is-visible", away);
   }
 
-  newChat(): void {
+  /**
+   * Новый разговор. Приватный заводится только так — отдельной командой, а не
+   * тумблером посреди беседы: это свойство самого разговора, как приватное окно
+   * в браузере. Обычный «новый чат» из него же и выводит.
+   */
+  newChat(priv = false): void {
     this.stop();
-    if (this.host.history.length === 0) return;
+    const wasPrivate = this.host.settings.privateChat;
+    if (this.host.history.length === 0 && wasPrivate === priv) return;
 
     // Спрашивать перед очисткой — лишний клик на каждый новый разговор, поэтому
     // чистим сразу, но держим копию: нажатие по уведомлению возвращает ленту.
-    const undo = this.snapshot();
+    // Терять нечего — и предлагать вернуть незачем.
+    const undo = this.host.history.length > 0 ? this.snapshot() : null;
     this.host.history.length = 0;
     this.host.persistHistory();
+    if (wasPrivate !== priv) {
+      this.host.settings.privateChat = priv;
+      void this.host.saveSettings();
+      // Плашка переживает очистку ленты — за ней стоит живое выделение в
+      // заметке, и после «нового чата» о том же куске часто спрашивают снова.
+      // А вот смену режима переживать ей нечего: приватному чату фрагмент
+      // заметки не положен вовсе.
+      this.attach(null);
+      this.dismissed = null;
+    }
     this.repaint();
-    undo(t("chatCleared"));
+    // Смену режима видно по шапке, а вот исчезнувший разговор — нет.
+    if (undo) undo(priv ? t("chatPrivateStarted") : t("chatCleared"));
+    else if (priv) new Notice(t("chatPrivateStarted"));
   }
 
   // ——————————————————————— правка ленты ———————————————————————
@@ -391,7 +558,7 @@ export class ChatView extends ItemView {
    * Спросить заново: ответ снимается вместе с вопросом, и вопрос уходит тем же,
    * каким был, — вплоть до системного промпта действия, если он был.
    */
-  private async regenerate(msg: StoredChatMessage): Promise<void> {
+  private async regenerate(msg: StoredChatMessage, config?: ApiConfig): Promise<void> {
     const history = this.host.history;
     const from = history.indexOf(msg);
     if (from === -1) return;
@@ -421,6 +588,7 @@ export class ChatView extends ItemView {
       // Ровно тот фрагмент, о котором спрашивали: подхватывать вместо него то,
       // что выделено в заметке сейчас, — это уже другой вопрос.
       quote: ask.quote ?? null,
+      config,
     });
   }
 
@@ -481,6 +649,13 @@ export class ChatView extends ItemView {
    * плашку видно, вопрос уйдёт вместе с фрагментом, а крестик её убирает.
    */
   private catchSelection(): void {
+    // В приватном чате заметки нет вовсе, а выделение в ней — та же заметка,
+    // только куском. Оставшееся от прошлой работы, оно подхватилось бы само и
+    // уехало вместе с первым же вопросом, которого никто об этом не просил.
+    if (this.host.settings.privateChat) {
+      if (this.attached) this.attach(null);
+      return;
+    }
     const found = this.host.selectionContext();
     // Тот же кусок, что уже на плашке или что сняли крестиком, — не трогаем:
     // событий тут много, а перерисовка на каждое давала бы мельтешение.
@@ -495,6 +670,12 @@ export class ChatView extends ItemView {
 
   /** Взять выделение в чат по команде — даже если плашку до этого снимали. */
   takeSelection(text?: string): void {
+    // Даже прямая просьба не отменяет приватности: молча отправить кусок заметки
+    // оттуда, где заметки нет, было бы обманом. Говорим вслух — и не отправляем.
+    if (this.host.settings.privateChat) {
+      new Notice(t("chatPrivateNoQuote"));
+      return;
+    }
     this.dismissed = null;
     const path = this.host.targetPath() ?? "";
     this.attach(text ? { path, text } : this.host.selectionContext());
@@ -599,10 +780,17 @@ export class ChatView extends ItemView {
     // С какого места история принадлежит этому заходу: по нему кнопка «Ещё раз»
     // отматывает всё сказанное, включая круги инструментов.
     const startAt = this.host.history.length;
+    // Чем спрашиваем. Обычно тем, что в настройках, но «ещё раз» умеет позвать
+    // другую модель на один запрос — и подпись под ответом должна сойтись с ней,
+    // а не с той, что осталась в шапке.
+    const cfg = opts.config ?? this.host.apiConfig();
     // Прикреплённое выделение уходит с вопросом и тут же снимается: следующий
     // вопрос — уже про своё, если не выделить заново. Явный null в опциях
-    // означает «без фрагмента» и плашку не смотрит вовсе.
-    const quote = (opts.quote === undefined ? this.attached?.text : opts.quote) ?? undefined;
+    // означает «без фрагмента» и плашку не смотрит вовсе. Приватный чат не
+    // отправляет фрагмент ни при каких условиях — последняя застава на пути
+    // всего, что могло уцелеть от прошлого разговора.
+    const asked = opts.quote === undefined ? this.attached?.text : opts.quote;
+    const quote = (this.host.settings.privateChat ? null : asked) ?? undefined;
     this.attach(null);
     // Про этот кусок уже спросили, и он остался в ленте. Выделение в заметке
     // никуда не делось — без этого плашка тут же вернулась бы, и фрагмент уехал
@@ -635,17 +823,30 @@ export class ChatView extends ItemView {
     // Действие, запущенное из заметки в режиме «показать в панели», — это
     // просьба ответить, а не править. С инструментами «перескажи главу»
     // кончалось тем, что модель сама клала пересказ на место главы.
-    const canUseTools = this.host.settings.tools && !opts.fromEditor;
+    // Приватный чат: модель не знает ни про Obsidian, ни про заметку — разговор
+    // как в веб-чате провайдера. На действие из заметки не распространяется:
+    // оно само про неё, и выключать там нечего.
+    const priv = this.host.settings.privateChat && !opts.fromEditor;
+    const canUseTools = this.host.settings.tools && !opts.fromEditor && !priv;
     const hint = canUseTools ? t("chatSystemHintTools") : t("chatSystemHint");
-    const system = [hint, this.host.settings.systemPrompt.trim(), opts.system?.trim()]
-      .filter(Boolean)
-      .join("\n\n");
-    if (system) messages.push({ role: "system", content: system });
 
     // «Отправлять заметку как контекст» — это про разговор в панели. Действие
     // над выделенным уже сказало, над чем работать, и заметка сверху — лишние
     // деньги и лишняя путаница: модель видит один и тот же текст дважды.
-    const note = opts.fromEditor ? null : this.host.noteContext();
+    const note = opts.fromEditor || priv ? null : this.host.noteContext();
+
+    // Видит ли модель заметку — половина того, что ей надо знать про инструменты.
+    // Без этой оговорки она лезет читать заметку на любой вопрос, даже когда он
+    // вовсе не про неё, а когда заметка уже приложена — читает её вторым разом,
+    // целым кругом запроса за те же деньги.
+    const reach = canUseTools ? (note ? t("chatToolsNoteHere") : t("chatToolsNoteHidden")) : "";
+    // В приватном чате не уходит ничего своего — ни объяснений про панель, ни
+    // общего промпта из настроек. Остаётся только промпт действия, но его в
+    // этом режиме и не бывает.
+    const own = priv ? [] : [hint, reach, this.host.settings.systemPrompt.trim()];
+    const system = [...own, opts.system?.trim()].filter(Boolean).join("\n\n");
+    if (system) messages.push({ role: "system", content: system });
+
     if (note) {
       messages.push({
         role: "system",
@@ -695,8 +896,8 @@ export class ChatView extends ItemView {
         let reasoningEl: HTMLElement | null = null;
         let first = true;
 
-        const result = await chat(this.host.apiConfig(), messages, {
-          stream: this.host.settings.stream && streamAvailable(this.host.settings),
+        const result = await chat(cfg, messages, {
+          stream: this.host.settings.stream && streamAllowed(providerOf(cfg)),
           signal: controller.signal,
           wantUsage: this.host.settings.showUsage,
           tools: canUseTools ? toolSpecs() : undefined,
@@ -722,13 +923,40 @@ export class ChatView extends ItemView {
         reasoning = result.reasoning || reasoning;
         body.removeClass("ai-streaming");
 
+        // На потоке остановка приходит не ошибкой, а обычным возвратом с тем,
+        // что успело прийти: без этой проверки оборванный ответ шёл дальше как
+        // целый — в ленту, а с ним и на следующий круг инструментов.
+        if (controller.signal.aborted) {
+          await this.keepPartial(bubble, body, answer, reasoning, controller, ask, cfg.model);
+          new Notice(t("aborted"));
+          return;
+        }
+
+        // Ответа нет, а размышления есть — значит ответ в них и лежит. Рассуждающие
+        // модели то и дело упираются в предел длины сразу после размышлений, а часть
+        // провайдеров и вовсе не делит поля и шлёт весь текст размышлениями. Сказать
+        // тут «пустой ответ» и выбросить написанное — худшее из возможного: за эти
+        // токены заплачено, ответ в них обычно уже есть, а после перезагрузки панели
+        // от запроса не осталось бы и следа.
+        //
+        // Но только когда модель и правда договорила. Пошла за инструментом — текста
+        // и не должно быть, а в размышлениях там «сейчас прочитаю заметку»: в ленте
+        // это мусор, а в истории — реплика, которая уедет в следующий запрос.
+        if (!answer.trim() && reasoning.trim() && result.toolCalls.length === 0) {
+          answer = reasoning;
+          reasoning = "";
+          // Иначе один и тот же текст встанет дважды: и свёрнутым блоком, и ответом.
+          bubble.querySelector(".ai-think")?.remove();
+          this.listEl.createDiv({ cls: "ai-notice", text: t("chatOnlyReasoning") });
+        }
+
         if (answer.trim()) {
           const reply: StoredChatMessage = {
             role: "assistant",
             content: answer,
             reasoning,
             usage: result.usage ?? undefined,
-            model: this.host.settings.model,
+            model: cfg.model,
           };
           this.host.history.push(reply);
           await this.renderMarkdown(answer, body);
@@ -780,32 +1008,7 @@ export class ChatView extends ItemView {
       const err = e instanceof ApiError ? e : new ApiError(String(e));
       body.removeClass("ai-streaming");
       if (err.aborted || controller.signal.aborted) {
-        // Оборванный ответ всё равно полезен — оставляем то, что успело прийти.
-        if (answer.trim()) {
-          await this.renderMarkdown(answer, body);
-          // Но в ленту он идёт, только если запрос сняли кнопкой, а не новым
-          // вопросом: дописанный в конец, он встал бы после чужого вопроса — и
-          // в ленте, и в контексте следующего запроса разговор бы перепутался.
-          let reply: StoredChatMessage | undefined;
-          if (this.controller === null || this.controller === controller) {
-            reply = {
-              role: "assistant",
-              content: answer,
-              reasoning,
-              model: this.host.settings.model,
-            };
-            this.host.history.push(reply);
-            this.host.persistHistory();
-          }
-          // Обрыв — не повод прятать кнопки: половину ответа тоже копируют и
-          // вставляют, и спрашивают заново чаще, чем целый.
-          this.addFooter(bubble, answer, null, reply);
-          // Оборвать могли и правкой ленты — тогда пузырь, в который писался
-          // ответ, остался вне документа, и увидеть ответ можно только заново.
-          if (!bubble.isConnected) this.repaint();
-        } else {
-          bubble.remove();
-        }
+        await this.keepPartial(bubble, body, answer, reasoning, controller, ask, cfg.model);
         new Notice(t("aborted"));
       } else {
         body.empty();
@@ -828,7 +1031,48 @@ export class ChatView extends ItemView {
     } finally {
       if (this.controller === controller) this.controller = null;
       this.paintSendButton();
+      // Лента подросла: и в контекст следующего вопроса влезет уже другое, и
+      // счёт за разговор стал больше.
+      this.paintReach();
+      this.paintTotal();
     }
+  }
+
+  /**
+   * Хвост оборванного ответа: то, что успело прийти, остаётся на экране —
+   * половину ответа тоже копируют и вставляют.
+   *
+   * А вот в ленту он идёт, только если этот заход всё ещё её хозяин. Прервать
+   * могли и новым вопросом, и очисткой чата, и снятием самого вопроса: ответ,
+   * дописанный в конец после любого из них, встал бы посреди чужого разговора
+   * — и в ленте, и в контексте следующего запроса.
+   */
+  private async keepPartial(
+    bubble: HTMLElement,
+    body: HTMLElement,
+    answer: string,
+    reasoning: string,
+    controller: AbortController,
+    ask: StoredChatMessage,
+    model: string,
+  ): Promise<void> {
+    if (!answer.trim()) {
+      bubble.remove();
+      return;
+    }
+    await this.renderMarkdown(answer, body);
+
+    let reply: StoredChatMessage | undefined;
+    const current = this.controller === null || this.controller === controller;
+    if (current && this.host.history.includes(ask)) {
+      reply = { role: "assistant", content: answer, reasoning, model };
+      this.host.history.push(reply);
+      this.host.persistHistory();
+    }
+    this.addFooter(bubble, answer, null, reply);
+    // Оборвать могли и правкой ленты — тогда пузырь, в который писался ответ,
+    // остался вне документа, и увидеть ответ можно только заново.
+    if (!bubble.isConnected) this.repaint();
   }
 
   /**
@@ -853,15 +1097,29 @@ export class ChatView extends ItemView {
     buttons.remove();
 
     const outcome = await runCall(this.host, parsed);
-    status.setText(t("toolApplied"));
-    card.addClass("is-applied");
-    if (parsed.writes) {
-      // В историю кладём след правки: иначе после перезагрузки панели в диалоге
-      // будет провал — вопрос есть, а что было сделано, непонятно.
-      this.host.history.push({ role: "assistant", content: t("toolDone", { title: parsed.title }) });
+    // Правка запросто не проходит: фрагмент не нашёлся, заметку закрыли, модель
+    // назвала несуществующий инструмент. Показывать это «применено» — врать в
+    // обе стороны: и пользователю на карточке, и модели следом, записью о
+    // сделанной работе, которой не было.
+    if (outcome.ok) {
+      // Чтение нечего применять — и зелёной отметки «сделано» оно не заслуживает:
+      // заметка от него не изменилась.
+      status.setText(parsed.writes ? t("toolApplied") : t("toolReadDone"));
+      if (parsed.writes) {
+        card.addClass("is-applied");
+        // В историю кладём след правки: иначе после перезагрузки панели в диалоге
+        // будет провал — вопрос есть, а что было сделано, непонятно.
+        this.host.history.push({
+          role: "assistant",
+          content: t("toolDone", { title: parsed.title }),
+        });
+      }
+    } else {
+      status.setText(t("toolNotApplied"));
+      card.addClass("is-failed");
     }
     this.followBottom();
-    return outcome;
+    return outcome.text;
   }
 
   private waitForDecision(buttons: HTMLElement, signal: AbortSignal): Promise<boolean> {
@@ -947,8 +1205,14 @@ export class ChatView extends ItemView {
   private repaint(): void {
     this.listEl.empty();
     this.actionEls.clear();
+    // Считаем до выхода по пустой ленте: очистка чата обнуляет и счёт за него.
+    this.paintReach();
+    this.paintTotal();
     if (this.host.history.length === 0) {
-      this.listEl.createDiv({ cls: "ai-empty", text: t("chatEmpty") });
+      this.listEl.createDiv({
+        cls: "ai-empty",
+        text: this.host.settings.privateChat ? t("chatEmptyPrivate") : t("chatEmpty"),
+      });
       return;
     }
     for (const m of this.host.history) {
@@ -1033,11 +1297,15 @@ export class ChatView extends ItemView {
       };
 
       // Ответ модели — вещь случайная: то же действие по тому же тексту может
-      // выйти лучше. Карточку помечает отменённой сама правка — новая ляжет
-      // отдельной записью ниже.
+      // выйти лучше — а другой моделью тем более. Карточку помечает отменённой
+      // сама правка, новая ляжет отдельной записью ниже.
       const again = foot.createEl("button", { cls: "ai-log-undo", text: t("logRepeat") });
-      again.onclick = () => void this.host.repeatAction(entry.id);
+      again.onclick = (e) =>
+        this.againMenu(e, (config) => void this.host.repeatAction(entry.id, config));
     }
+    // Чем правили: обычно моделью из настроек, но «переделать» могло позвать
+    // другую — иначе не понять, чем вышло лучше.
+    if (entry.model) foot.createSpan({ cls: "ai-log-model", text: entry.model });
     if (entry.usage && this.host.settings.showUsage) {
       foot.createSpan({
         cls: "ai-log-usage",
@@ -1153,7 +1421,7 @@ export class ChatView extends ItemView {
       const again = foot.createEl("button", { cls: "ai-msg-btn ai-msg-again clickable-icon" });
       setIcon(again, "refresh-cw");
       again.setAttr("aria-label", t("chatAgain"));
-      again.onclick = () => void this.regenerate(msg);
+      again.onclick = (e) => this.againMenu(e, (config) => void this.regenerate(msg, config));
 
       this.dropButton(foot, msg);
     }

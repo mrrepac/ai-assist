@@ -62,13 +62,6 @@ export interface ToolSpec {
   };
 }
 
-/**
- * Какого рода эндпоинт. Своих полей сверх OpenAI-формата у плагина сейчас нет
- * ни для кого — вид провайдера остался пометкой в пресетах, на запрос он не
- * влияет.
- */
-export type ProviderKind = "deepseek" | "openai";
-
 export interface ApiConfig {
   baseUrl: string;
   apiKey: string;
@@ -272,6 +265,20 @@ function describeError(status: number, raw: string): ApiError {
   return new ApiError((detail ? `${head} — ${detail}` : head) + hint, status);
 }
 
+/**
+ * Тело ответа разбором, а не полем res.json: то — геттер, и на не-JSON он
+ * бросает голый SyntaxError. А приходит такое не в диковинку — прокси и
+ * порталы отдают HTML-страницу со статусом 200, и «Unexpected token <»
+ * пользователю не говорит ничего.
+ */
+function readJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 function readUsage(u: WireUsage | undefined): Usage | null {
   if (!u) return null;
   return {
@@ -328,8 +335,9 @@ async function plainChat(
   }
   if (res.status >= 400) throw describeError(res.status, res.text ?? "");
 
-  const json = res.json as WireChunk | undefined;
-  const msg: WireDelta = json?.choices?.[0]?.message ?? {};
+  const json = readJson(res.text ?? "") as WireChunk | null;
+  if (!json) throw new ApiError(t("errBadReply"));
+  const msg: WireDelta = json.choices?.[0]?.message ?? {};
   const text = String(msg.content ?? "");
   const reasoning = String(msg.reasoning_content ?? msg.reasoning ?? "");
   if (reasoning && opts.onReasoning) opts.onReasoning(reasoning);
@@ -342,9 +350,9 @@ async function plainChat(
   return {
     text,
     reasoning,
-    usage: readUsage(json?.usage),
+    usage: readUsage(json.usage),
     toolCalls,
-    truncated: json?.choices?.[0]?.finish_reason === "length",
+    truncated: json.choices?.[0]?.finish_reason === "length",
   };
 }
 
@@ -493,7 +501,7 @@ export async function listModels(cfg: ApiConfig): Promise<string[]> {
     throw: false,
   });
   if (res.status >= 400) throw describeError(res.status, res.text ?? "");
-  const list = (res.json as { data?: { id?: string }[] } | undefined)?.data;
+  const list = (readJson(res.text ?? "") as { data?: { id?: string }[] } | null)?.data;
   if (!Array.isArray(list)) throw new ApiError(t("errModelList"));
   return list.map((m) => String(m.id ?? "")).filter(Boolean).sort();
 }

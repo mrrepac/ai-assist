@@ -47,7 +47,7 @@ export interface QuickMenuOptions {
 }
 
 /** Тысячи неразрывным пробелом: «27 600» читается, «27600» — считается. */
-function grouped(n: number): string {
+export function grouped(n: number): string {
   return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 }
 
@@ -193,8 +193,12 @@ export class QuickMenu extends Modal {
 
     // Стрелки листают прошлые промпты: правки часто повторяются слово в слово.
     if ((e.key === "ArrowUp" || e.key === "ArrowDown") && this.opts.recent.length) {
-      const atEdge = e.key === "ArrowUp" ? this.input.selectionStart === 0 : false;
-      if (e.key === "ArrowUp" && !atEdge && this.input.value) return;
+      // Листаем с пустого поля или пока в нём стоит нетронутый прошлый промпт.
+      // Начатый текст стрелка иначе затирала бы без возврата: поле в три строки,
+      // и «вниз» в нём — это переход на следующую строку, а не листание.
+      const walking =
+        this.recentIndex >= 0 && this.input.value === this.opts.recent[this.recentIndex];
+      if (!walking && this.input.value) return;
       e.preventDefault();
       const last = this.opts.recent.length - 1;
       this.recentIndex =

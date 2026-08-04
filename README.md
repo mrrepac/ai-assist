@@ -90,8 +90,9 @@ Everything lives in three sections:
 - **Provider** — service, address, key, model, connection test.
 - **Behaviour** — temperature, response length limit, streaming,
   what to do when nothing is selected (the whole note / the section / the paragraph /
-  nothing), the length past which it asks before sending, token usage display, note
-  editing tools, the system prompt for the chat.
+  nothing), the length past which it asks before sending, token usage display, where new
+  notes go (the vault root / a folder of your own / next to the note being worked on),
+  note editing tools, the system prompt for the chat.
 - **Quick menu** — the keys: five by default, more if you add them, and a row can be
   dragged by its handle; plus what the plugin puts into the editor's context menu. Each
   key is an action, and this is where an action is
@@ -102,8 +103,9 @@ Everything lives in three sections:
 ## Commands
 
 Every action is a command, so any of them can get a hotkey of your own. Plus: open the
-chat, ask about the selection, repeat the last action, stop generation, and the quick menu
-(which takes `Alt+1` if you switch it on in the settings).
+chat, start a private chat, ask about the selection, repeat the last action, stop generation,
+and the quick menu. The last two take `Alt+1` and `Alt+2` if you switch that on in the
+settings.
 
 ## What is sent where
 
@@ -116,6 +118,14 @@ Two things send more than the question itself. "Send the current note as context
 the open note to every request in the chat. And a model allowed to edit notes can read the
 open one whenever it decides to — that is a separate switch, and every call it makes is
 shown in the panel as a card.
+
+When none of that is wanted, there is the **private chat** — the "New private chat" entry in
+the header's `…` menu, the command in the palette, or `Alt+2` if you let the plugin take the
+keys. It works like a private window in a browser: a separate conversation where nothing
+leaves the vault at all — no note, no selected fragment, no tools, no system prompt. Just your
+question and the answer, the way it works on the provider's own site. The header is tinted
+there, and in place of the context button sits an unplugged cord: there is nothing to switch
+on. A normal "New chat" brings everything back.
 
 ## Requirements
 

@@ -7,8 +7,9 @@ import type AiAssistPlugin from "./main";
 import { QUICK_KEYS } from "./quickmenu";
 import {
   AiAssistSettings,
-  DEEPSEEK_MODELS,
+  DEEPSEEK_MODEL,
   EditorMenuMode,
+  NewNoteFolder,
   PROVIDER_ORDER,
   QUICK_ASK,
   QUICK_SLOTS_MAX,
@@ -387,7 +388,7 @@ export class AiAssistSettingTab extends PluginSettingTab {
       .setDesc(MODEL_HINT[provider] ? t(MODEL_HINT[provider]) : "")
       .addText((c) =>
         c
-          .setPlaceholder(DEEPSEEK_MODELS[0])
+          .setPlaceholder(DEEPSEEK_MODEL)
           .setValue(s.model)
           .onChange((v) => {
             s.model = v.trim();
@@ -538,6 +539,42 @@ export class AiAssistSettingTab extends PluginSettingTab {
           await this.save();
         }),
       );
+
+    // Заметки создаёт и кнопка «сохранить чат», и сама модель — правило на них
+    // общее, поэтому стоит до раздела про инструменты, а не внутри него.
+    new Setting(containerEl)
+      .setName(t("setNewNote"))
+      .setDesc(t("setNewNoteDesc"))
+      .addDropdown((c) =>
+        c
+          .addOptions({
+            root: t("setNewNoteRoot"),
+            folder: t("setNewNoteFolder"),
+            beside: t("setNewNoteBeside"),
+          })
+          .setValue(s.newNoteFolder)
+          .onChange(async (v) => {
+            s.newNoteFolder = v as NewNoteFolder;
+            await this.save();
+            // Поле пути нужно только одному режиму из трёх.
+            this.display();
+          }),
+      );
+
+    if (s.newNoteFolder === "folder") {
+      new Setting(containerEl)
+        .setName(t("setNewNotePath"))
+        .setDesc(t("setNewNotePathDesc"))
+        .addText((c) =>
+          c
+            .setPlaceholder("Архив/ИИ")
+            .setValue(s.newNoteFolderPath)
+            .onChange((v) => {
+              s.newNoteFolderPath = v.trim();
+              this.saveLater();
+            }),
+        );
+    }
 
     new Setting(containerEl).setName(t("setToolsHead")).setHeading();
 

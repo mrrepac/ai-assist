@@ -44,6 +44,7 @@ const en = {
   // ——— команды ———
   cmdOpenChat: "Open AI chat",
   cmdStop: "Stop generation",
+  cmdPrivateChat: "New private chat",
   cmdSendSelection: "Ask about the selection",
   cmdRepeat: "Repeat the last action",
   cmdQuick: "Quick menu over the selection",
@@ -86,12 +87,11 @@ const en = {
   chatYou: "You",
   chatModel: "Model",
   chatThinking: "Thinking",
-  chatContextNote: "Send the current note as context",
-  chatContextOn: "Context: note",
   chatWaiting: "Thinking…",
   chatCleared: "Chat cleared",
   chatUndoClear: "Click to bring it back",
   chatContextClipped: "The note is long — only its beginning went into the context.",
+  chatOnlyReasoning: "The model gave no separate answer — below is what it thought through.",
   chatAttachSize: "{chars} chars",
   chatAttachDrop: "Do not ask about this fragment",
   chatAttached: "Selected fragment ({chars} chars)",
@@ -106,6 +106,16 @@ const en = {
     "Never explain that you have no access to the vault and never ask the user to copy by hand.",
   chatUsage: "{prompt} in / {completion} out",
   chatCached: ", {cached} cached",
+  chatTotal: "This conversation: {prompt} in / {completion} out",
+  chatCtxK: "{n}k",
+  chatCtxOff: "Send the current note as context · the conversation takes {talk} chars",
+  chatCtxOn: "The note goes with every question: {note} chars · the conversation, {talk}",
+  chatPrivateOn:
+    "Private chat: no note, no selection, no editing tools, no system prompt — just the model, " +
+    "the way it answers on the provider's own site. “New chat” goes back to the usual one.",
+  chatPrivateStarted: "Private chat: nothing from the vault is sent",
+  chatEmptyPrivate: "Private chat — the model knows nothing about your vault",
+  chatPrivateNoQuote: "A private chat sends no fragments of notes",
 
   // ——— инструменты ———
   chatSystemHintTools:
@@ -118,7 +128,17 @@ const en = {
     "old text in place and add a second copy. " +
     "When the user asks you to write something into the note, call the tool — never tell them " +
     "to copy the text by hand and never claim you have no access to the vault. " +
-    "Every edit is shown to the user for approval, so it is safe to propose one.",
+    "Every edit is shown to the user for approval, so it is safe to propose one. " +
+    "Having the tools does not mean using them: a question that is not about the note is " +
+    "answered with words, and most questions are like that. Reach for a tool only when the " +
+    "user asks about their own text or asks you to change it.",
+  chatToolsNoteHere:
+    "The note the user is looking at is attached below in full. Do not call read_note — you " +
+    "already have the text. The only exception is when the attachment says it was cut short.",
+  chatToolsNoteHidden:
+    "You have not been shown the note. Do not go and read it just in case: if the question " +
+    "does not concern the user's own text, answer it straight away and do not mention the " +
+    "note at all.",
   toolRead: "Read the note",
   toolInsert: "Insert into the note",
   toolReplaceIn: "Replace a fragment",
@@ -130,7 +150,9 @@ const en = {
   toolApply: "Apply",
   toolReject: "Reject",
   toolApplied: "Applied",
+  toolReadDone: "Read",
   toolRejected: "Rejected",
+  toolNotApplied: "Did not go through",
   toolDone: "({title} — done)",
   toolFailed: "Could not do it: {reason}",
   toolNoteCreated: "Note created: {path}",
@@ -192,6 +214,7 @@ const en = {
   chatNoteHead: "{model}, {when}",
   chatToBottom: "Scroll to the bottom",
   chatAgain: "Ask again",
+  chatAgainSame: "The same model ({model})",
   chatAgainLast: "Only the last answer can be asked again",
   chatNoQuestion: "There is no question above this answer",
   chatEditAsk: "Edit the question",
@@ -201,6 +224,14 @@ const en = {
   setFresh: "Start with an empty chat",
   setFreshDesc:
     "When Obsidian starts, the panel opens empty and yesterday's conversation is dropped. Save what you need to a note first.",
+  setNewNote: "Where new notes go",
+  setNewNoteDesc:
+    "Both the saved conversation and whatever the model creates on its own end up here.",
+  setNewNoteRoot: "The vault root",
+  setNewNoteFolder: "One folder",
+  setNewNoteBeside: "Next to the note being worked on",
+  setNewNotePath: "The folder",
+  setNewNotePathDesc: "It will be created if it is not there yet. Empty means the vault root.",
   noSelection: "Select the text to work on",
   tooBigTitle: "That is a lot of text",
   tooBigAsk:
@@ -285,11 +316,12 @@ const en = {
     "Every action is also a command: give it a hotkey and call it without the menu. Actions that " +
     "did not get a key keep their commands too.",
   setHotkeysBtn: "Open hotkeys",
-  setHotkey: "Take Alt+1 for the quick menu",
+  setHotkey: "Take Alt+1 and Alt+2",
   setHotkeyDesc:
-    "Off, the plugin claims no keys at all: open the quick menu from the command palette, or bind " +
-    "whatever suits you in the hotkey settings. Your own binding beats this default either way.",
-  setHotkeyReload: "The hotkey changes once the plugin is reloaded (or Obsidian restarts).",
+    "Alt+1 opens the quick menu over the selection, Alt+2 starts a private chat. Off, the plugin " +
+    "claims no keys at all: run both from the command palette, or bind whatever suits you in the " +
+    "hotkey settings. Your own binding beats these defaults either way.",
+  setHotkeyReload: "The hotkeys change once the plugin is reloaded (or Obsidian restarts).",
   setEditorMenu: "Right-click on the selection",
   setEditorMenuDesc:
     "What the editor context menu offers while text is selected — on a phone it is the same menu, " +
@@ -320,6 +352,7 @@ const en = {
     "The streaming request failed. If it keeps happening, turn off “Stream the answer” " +
     "in the settings:",
   errNoStream: "The provider answered without a stream",
+  errBadReply: "The provider's reply is not JSON — check the API address",
   errStreamBroken: "The stream broke:",
   errAborted: "Stopped",
   chatToolLimit:
@@ -373,6 +406,7 @@ const ru: typeof en = {
   // ——— команды ———
   cmdOpenChat: "Открыть чат с ИИ",
   cmdStop: "Остановить генерацию",
+  cmdPrivateChat: "Новый приватный чат",
   cmdSendSelection: "Спросить о выделенном",
   cmdRepeat: "Повторить последнее действие",
   cmdQuick: "Быстрое меню над выделением",
@@ -415,12 +449,11 @@ const ru: typeof en = {
   chatYou: "Ты",
   chatModel: "Модель",
   chatThinking: "Размышления",
-  chatContextNote: "Отправлять текущую заметку как контекст",
-  chatContextOn: "Контекст: заметка",
   chatWaiting: "Думает…",
   chatCleared: "Чат очищен",
   chatUndoClear: "Нажми, чтобы вернуть",
   chatContextClipped: "Заметка длинная — в контекст ушло только её начало.",
+  chatOnlyReasoning: "Модель не дала отдельного ответа — ниже то, что она надумала.",
   chatAttachSize: "{chars} зн.",
   chatAttachDrop: "Не спрашивать про этот фрагмент",
   chatAttached: "Выделенный фрагмент ({chars} зн.)",
@@ -435,6 +468,16 @@ const ru: typeof en = {
     "Никогда не объясняй, что у тебя нет доступа к хранилищу, и не проси копировать вручную.",
   chatUsage: "{prompt} на вход / {completion} на выход",
   chatCached: ", из них {cached} из кэша",
+  chatTotal: "За разговор: {prompt} на вход / {completion} на выход",
+  chatCtxK: "{n}к",
+  chatCtxOff: "Отправлять текущую заметку как контекст · разговор весит {talk} зн.",
+  chatCtxOn: "Заметка уедет с каждым вопросом: {note} зн. · разговор — {talk}",
+  chatPrivateOn:
+    "Приватный чат: ни заметки, ни выделенного, ни инструментов правки, ни системного промпта — " +
+    "только модель, как она отвечает на сайте провайдера. «Новый чат» возвращает обычный.",
+  chatPrivateStarted: "Приватный чат: из хранилища не уходит ничего",
+  chatEmptyPrivate: "Приватный чат — модель ничего не знает про твоё хранилище",
+  chatPrivateNoQuote: "В приватном чате фрагменты заметок не отправляются",
 
   // ——— инструменты ———
   chatSystemHintTools:
@@ -447,7 +490,16 @@ const ru: typeof en = {
     "месте, и получится вторая копия. " +
     "Когда просят что-то написать в заметку — вызывай инструмент, а не проси копировать вручную " +
     "и никогда не говори, что у тебя нет доступа к хранилищу. " +
-    "Каждая правка показывается пользователю на подтверждение, так что предлагать её безопасно.",
+    "Каждая правка показывается пользователю на подтверждение, так что предлагать её безопасно. " +
+    "Иметь инструменты не значит ими пользоваться: вопрос не про заметку — отвечай словами, а " +
+    "таких вопросов большинство. Берись за инструмент, только когда спрашивают про свой текст " +
+    "или просят его изменить.",
+  chatToolsNoteHere:
+    "Заметка, которую смотрит пользователь, приложена ниже целиком. Не вызывай read_note — текст " +
+    "у тебя уже есть. Исключение одно: если в приложенном сказано, что оно обрезано.",
+  chatToolsNoteHidden:
+    "Заметку тебе не показали. Не ходи читать её на всякий случай: если вопрос не про текст " +
+    "пользователя — отвечай сразу и заметку не поминай вовсе.",
   toolRead: "Прочитать заметку",
   toolInsert: "Вставить в заметку",
   toolReplaceIn: "Заменить фрагмент",
@@ -459,7 +511,9 @@ const ru: typeof en = {
   toolApply: "Применить",
   toolReject: "Отклонить",
   toolApplied: "Применено",
+  toolReadDone: "Прочитано",
   toolRejected: "Отклонено",
+  toolNotApplied: "Не прошло",
   toolDone: "({title} — сделано)",
   toolFailed: "Не вышло: {reason}",
   toolNoteCreated: "Заметка создана: {path}",
@@ -521,6 +575,7 @@ const ru: typeof en = {
   chatNoteHead: "{model}, {when}",
   chatToBottom: "Вниз",
   chatAgain: "Спросить заново",
+  chatAgainSame: "Той же моделью ({model})",
   chatAgainLast: "Заново спрашивается только последний ответ",
   chatNoQuestion: "Над этим ответом нет вопроса",
   chatEditAsk: "Изменить вопрос",
@@ -530,6 +585,13 @@ const ru: typeof en = {
   setFresh: "Начинать с пустого чата",
   setFreshDesc:
     "При запуске Obsidian панель открывается пустой, вчерашний разговор не подхватывается. Что нужно — сохрани в заметку заранее.",
+  setNewNote: "Куда класть новые заметки",
+  setNewNoteDesc: "И сохранённый разговор, и то, что модель создаёт сама.",
+  setNewNoteRoot: "В корень хранилища",
+  setNewNoteFolder: "В одну папку",
+  setNewNoteBeside: "Рядом с рабочей заметкой",
+  setNewNotePath: "Папка",
+  setNewNotePathDesc: "Если её нет — будет создана. Пусто — то же, что корень.",
   noSelection: "Выдели текст, с которым работать",
   tooBigTitle: "Много текста",
   tooBigAsk: "В модель уйдёт {chars} знаков — больше твоего порога в {limit}. Отправлять?",
@@ -612,11 +674,12 @@ const ru: typeof en = {
     "Каждое действие — ещё и команда: дай ей хоткей и вызывай мимо меню. У действий, оставшихся " +
     "без клавиши, команда тоже есть.",
   setHotkeysBtn: "Открыть горячие клавиши",
-  setHotkey: "Занять Alt+1 под быстрое меню",
+  setHotkey: "Занять Alt+1 и Alt+2",
   setHotkeyDesc:
-    "Выключено — плагин не занимает клавиш вовсе: быстрое меню открывается из палитры команд, а " +
-    "хоткей на него вешается свой, какой удобно. Своё назначение сильнее умолчания в любом случае.",
-  setHotkeyReload: "Клавиша изменится после перезагрузки плагина (или перезапуска Obsidian).",
+    "Alt+1 открывает быстрое меню над выделением, Alt+2 заводит приватный чат. Выключено — плагин не " +
+    "занимает клавиш вовсе: обе команды есть в палитре, а хоткеи вешаются свои, какие удобно. " +
+    "Своё назначение сильнее умолчания в любом случае.",
+  setHotkeyReload: "Клавиши изменятся после перезагрузки плагина (или перезапуска Obsidian).",
   setEditorMenu: "Правая кнопка по выделению",
   setEditorMenuDesc:
     "Что предлагает контекстное меню редактора, пока текст выделен, — на телефоне это то же меню, " +
@@ -647,6 +710,7 @@ const ru: typeof en = {
     "Потоковый запрос не прошёл. Если повторяется — выключи в настройках " +
     "«Показывать ответ по мере генерации»:",
   errNoStream: "Провайдер ответил без потока",
+  errBadReply: "Ответ провайдера — не JSON, проверь адрес API",
   errStreamBroken: "Поток оборвался:",
   errAborted: "Остановлено",
   chatToolLimit:

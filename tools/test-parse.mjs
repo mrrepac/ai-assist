@@ -40,7 +40,7 @@ async function load(entry, name) {
 const { drainSse, endpoint, collectToolCalls, isLocalUrl } = await load("src/api.ts", "api");
 const { cleanReply, offsetAt, sectionAt, sectionName } = await load("src/actions.ts", "actions");
 const { contextWindow, messageText } = await load("src/history.ts", "history");
-const { mergeSettings, providerOf, streamAvailable, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank } = await load("src/types.ts", "types");
+const { mergeSettings, providerOf, streamAvailable, streamAllowed, configFor, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank } = await load("src/types.ts", "types");
 const { chatToMarkdown } = await load("src/chatnote.ts", "chatnote");
 const { parseCall, runCall } = await load("src/tools.ts", "tools");
 const { diffWords } = await load("src/diff.ts", "diff");
@@ -265,6 +265,35 @@ check(
 );
 check("встроенное нельзя пометить удаляемым", mergeSettings({ actions: [{ id: "spelling", name: "x", prompt: "p", mode: "replace", icon: "i", builtin: false }] }).actions[0].builtin, true);
 
+// Обязательны у действия только id и промпт: остальные поля дописывались в
+// разные версии, да и data.json правят руками. Недостающее имя тут роняло
+// загрузку целиком — вместе с настройками и лентой.
+check(
+  "действие без имени не роняет загрузку",
+  mergeSettings({ actions: [{ id: "custom-7", prompt: "п" }] }).actions.length,
+  6,
+);
+check(
+  "имени нет — подставляется заготовочное",
+  mergeSettings({ actions: [{ id: "custom-7", prompt: "п" }] }).actions.at(-1).name.length > 0,
+  true,
+);
+check(
+  "мусор в режиме действия чинится",
+  mergeSettings({ actions: [{ id: "custom-7", name: "Моё", prompt: "п", mode: "ой" }] }).actions.at(-1).mode,
+  "replace",
+);
+check(
+  "иконки нет — берётся запасная",
+  mergeSettings({ actions: [{ id: "custom-7", name: "Моё", prompt: "п" }] }).actions.at(-1).icon,
+  "sparkles",
+);
+check(
+  "встроенное без имени тоже переживает загрузку",
+  mergeSettings({ actions: [{ id: "spelling", prompt: "мой промпт" }] }).actions[0].prompt,
+  "мой промпт",
+);
+
 // ——— вызовы инструментов из потока ———
 const toolCalls = (chunks) => {
   const calls = new Map();
@@ -345,8 +374,12 @@ const hostAt = (path, noteBody = "текст", clipped = false) => ({
     return "ok";
   },
 });
-const write = (name, args, notePath, hostPath) =>
+// Результат вызова — пара «получилось / что сказать модели». Проверки текста
+// смотрят на текст, а отдельные — на сам признак: по нему панель решает, писать
+// на карточке «Применено» или «Не прошло».
+const call = (name, args, notePath, hostPath) =>
   runCall(hostAt(hostPath), parseCall({ id: "1", name, arguments: JSON.stringify(args) }, notePath));
+const write = async (...args) => (await call(...args)).text;
 
 check("правка ложится в ту же заметку", (await write("insert_text", { text: "х" }, HERE, HERE)).startsWith("Inserted"), true);
 check("ушли в другую заметку — правки нет", (await write("insert_text", { text: "х" }, HERE, "Другая.md")).startsWith("Failed"), true);
@@ -357,8 +390,9 @@ check("пустой текст не пишется", (await write("insert_text",
 // ——— правка без выделения ———
 // Раньше менять уже написанный текст умел только replace_selection, а он без
 // выделения падал: в чате заметку было не отредактировать вовсе.
-const inNote = (args, body) =>
+const inNoteCall = (args, body) =>
   runCall(hostAt(HERE, body), parseCall({ id: "1", name: "replace_in_note", arguments: JSON.stringify(args) }, HERE));
+const inNote = async (...args) => (await inNoteCall(...args)).text;
 
 check("фрагмент заменяется без выделения", (await inNote({ find: "сыра", replace: "сыру" }, "кусок сыра тут")).startsWith("Replaced"), true);
 check("не найденный фрагмент — понятный отказ", (await inNote({ find: "нетути", replace: "х" }, "кусок сыра тут")).includes("read_note"), true);
@@ -379,10 +413,23 @@ check("ушли из заметки — переписывания нет", (awa
 // ——— чтение обрезанной заметки ———
 // Начало длинной заметки модель иначе примет за весь текст и перепишет её по
 // половине — про обрезку ей надо сказать прямо.
-const readWith = (clipped) =>
-  runCall(hostAt(HERE, "текст", clipped), parseCall({ id: "1", name: "read_note", arguments: "{}" }, HERE));
+const readWith = async (clipped) =>
+  (await runCall(hostAt(HERE, "текст", clipped), parseCall({ id: "1", name: "read_note", arguments: "{}" }, HERE))).text;
 check("обрезка заметки видна модели", (await readWith(true)).includes("only the beginning"), true);
 check("целая заметка отдаётся без оговорок", (await readWith(false)).includes("only the beginning"), false);
+
+// ——— получилось или нет ———
+// Панель до этого писала «Применено» на любой исход и клала в ленту запись о
+// сделанной работе — даже когда фрагмент не нашёлся и заметка осталась прежней.
+check("удавшаяся правка помечается", (await call("insert_text", { text: "х" }, HERE, HERE)).ok, true);
+check("ушли из заметки — правки не было", (await call("insert_text", { text: "х" }, HERE, "Другая.md")).ok, false);
+check("пустой текст правкой не считается", (await call("insert_text", { text: "" }, HERE, HERE)).ok, false);
+check("ненайденный фрагмент — не правка", (await inNoteCall({ find: "нетути", replace: "х" }, "текст")).ok, false);
+check("два вхождения — не правка", (await inNoteCall({ find: "сыр", replace: "х" }, "сыр и сыр")).ok, false);
+check("замена одного вхождения удалась", (await inNoteCall({ find: "сыра", replace: "сыру" }, "кусок сыра")).ok, true);
+check("неизвестный инструмент не выполнен", (await call("rm_rf", {}, HERE, HERE)).ok, false);
+check("чтение заметки удалось", (await call("read_note", {}, HERE, HERE)).ok, true);
+check("читать нечего — не удалось", (await call("read_note", {}, HERE, null)).ok, false);
 
 // ——— что уходит в контекст ———
 // Мерить контекст штуками сообщений нельзя: двадцать реплик бывают и на строчку,
@@ -788,6 +835,50 @@ check("выключенный вручную не включается обра�
 check("включённый вручную переживает загрузку", mergeSettings({ defaultHotkey: true }).defaultHotkey, true);
 check("мусор в поле чинится", mergeSettings({ defaultHotkey: "ага" }).defaultHotkey, true);
 
+// ——— приватный чат ———
+// Разговор без всего, что плагин добавляет от себя: ни заметки, ни инструментов,
+// ни системного промпта.
+check("по умолчанию чат не приватный", mergeSettings(null).privateChat, false);
+check("режим переживает загрузку", mergeSettings({ privateChat: true }).privateChat, true);
+
+// ——— куда класть новые заметки ———
+// И сохранённый разговор, и то, что создаёт сама модель: до сих пор всё падало
+// в корень хранилища, рядом с рабочими заметками.
+check("по умолчанию — корень", mergeSettings(null).newNoteFolder, "root");
+check("выбранный режим переживает загрузку", mergeSettings({ newNoteFolder: "beside" }).newNoteFolder, "beside");
+check("папка сохраняется", mergeSettings({ newNoteFolder: "folder", newNoteFolderPath: "Архив/ИИ" }).newNoteFolderPath, "Архив/ИИ");
+check("мусор в режиме папки чинится", mergeSettings({ newNoteFolder: "куда-нибудь" }).newNoteFolder, "root");
+check("мусор вместо пути — пусто", mergeSettings({ newNoteFolderPath: 42 }).newNoteFolderPath, "");
+check("пути по умолчанию нет", mergeSettings(null).newNoteFolderPath, "");
+
+// ——— разовый прогон чужой моделью ———
+// «Ещё раз» умеет позвать другую модель, не переключая на неё плагин: выбор
+// разовый, а следующий вопрос должен уйти тем же, чем уходил до сих пор.
+const twoProfiles = (() => {
+  const s = defaultSettings();
+  s.temperature = 0.7;
+  s.maxTokens = 500;
+  s.profiles.polza = { apiKey: "sk-polza", model: "openai/gpt-4o", baseUrl: "https://api.polza.ai/api/v1" };
+  s.profiles.empty = { apiKey: "sk-x", model: "", baseUrl: "https://x.ai/v1" };
+  return s;
+})();
+check("конфиг чужого профиля собирается", configFor(twoProfiles, "polza").model, "openai/gpt-4o");
+check("ключ берётся из профиля", configFor(twoProfiles, "polza").apiKey, "sk-polza");
+check("общие настройки достаются из активных", configFor(twoProfiles, "polza").temperature, 0.7);
+check("предел длины тоже общий", configFor(twoProfiles, "polza").maxTokens, 500);
+check("профиль без модели спрашивать нечем", configFor(twoProfiles, "empty"), null);
+check("незнакомого профиля нет", configFor(twoProfiles, "нет-такого"), null);
+// Адрес мог не сохраниться (профиль из старых настроек) — берём из пресета.
+check(
+  "адрес достраивается из пресета",
+  configFor({ ...twoProfiles, profiles: { gptunnel: { apiKey: "k", model: "m", baseUrl: "" } } }, "gptunnel").baseUrl,
+  "https://gptunnel.ru/v1",
+);
+// Поток запрещён не настройкам, а провайдеру: разовый прогон идёт мимо настроек.
+check("поток чужого провайдера считается по нему же", streamAllowed(providerOf(configFor(twoProfiles, "polza"))), true);
+check("у ChadGPT поток закрыт и разовому прогону", streamAllowed("chadgpt"), false);
+check("активные настройки считаются так же", streamAvailable({ baseUrl: "https://ask.chadgpt.ru/api/v1" }), false);
+
 // ——— чистая лента при запуске ———
 check("по умолчанию чат открывается пустым", mergeSettings(null).freshStart, true);
 check("выключенный режим переживает загрузку", mergeSettings({ freshStart: false }).freshStart, false);
@@ -808,7 +899,6 @@ check("модель прежнего провайдера сохранилась
 check("ключ нового подставился", moved.apiKey, "ключ-polza");
 check("модель нового подставилась", moved.model, "google/gemini");
 check("адрес взят из пресета", moved.baseUrl, "https://api.polza.ai/api/v1");
-check("вид эндпоинта сменился", moved.kind, "openai");
 check("возврат обратно достаёт свой ключ", (() => { switchProvider(moved, "deepseek"); return moved.apiKey; })(), "ключ-deepseek");
 check("незнакомый провайдер без профиля — модели нет", (() => { const s = defaultSettings(); switchProvider(s, "gptunnel"); return s.model; })(), "");
 

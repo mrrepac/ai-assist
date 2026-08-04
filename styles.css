@@ -49,6 +49,39 @@
   color: var(--text-accent);
 }
 
+/* Кнопка контекста с ценой вопроса: иконка и цифра рядом, одной кнопкой. */
+.ai-assist-chat .ai-bar-ctx {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-1);
+  width: auto;
+}
+
+.ai-assist-chat .ai-bar-ctx-size {
+  font-size: var(--font-ui-smaller);
+  line-height: 1;
+}
+
+/* Чистый чат: метка на месте кнопки заметки — включать там нечего. Шапка
+   меняет цвет, как адресная строка приватного окна: где находишься, должно
+   быть видно, а не припоминаться. */
+.ai-assist-chat .ai-bar-private {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--size-2-1);
+  color: var(--text-accent);
+}
+
+.ai-assist-chat .ai-bar-private .svg-icon {
+  width: var(--icon-s);
+  height: var(--icon-s);
+}
+
+.ai-assist-chat.is-private .ai-bar {
+  background: var(--background-modifier-hover);
+  border-bottom-color: var(--text-accent);
+}
+
 /* ——— кнопка «вниз» ——— */
 
 .ai-assist-chat .ai-down {
@@ -236,6 +269,14 @@
   border-top: 1px solid var(--background-modifier-border);
 }
 
+/* Счёт за разговор: своей строкой во всю ширину, ниже поля ввода. */
+.ai-assist-chat .ai-total {
+  flex-basis: 100%;
+  text-align: right;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
 /* Прикреплённый фрагмент заметки: о нём пойдёт вопрос. */
 .ai-assist-chat .ai-attach {
   display: flex;
@@ -344,6 +385,11 @@
 .ai-assist-chat .ai-tool.is-rejected {
   border-left-color: var(--text-faint);
   opacity: 0.6;
+}
+
+/* Отказ не по воле пользователя: правка не легла, и это стоит заметить. */
+.ai-assist-chat .ai-tool.is-failed {
+  border-left-color: var(--text-error);
 }
 
 .ai-assist-chat .ai-tool-head {
@@ -640,10 +686,6 @@
   resize: vertical;
 }
 
-.ai-prompt-input {
-  width: 100%;
-}
-
 /* ——— журнал правок ——— */
 
 .ai-assist-chat .ai-log {
@@ -778,9 +820,23 @@
   margin-top: var(--size-2-2);
 }
 
+/* Чем правили. Стоит перед расходом, поэтому вправо прижимается оно. */
+.ai-assist-chat .ai-log-model {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-faint);
+}
+
 .ai-assist-chat .ai-log-usage {
   margin-left: auto;
   color: var(--text-faint);
+}
+
+.ai-assist-chat .ai-log-model + .ai-log-usage {
+  margin-left: 0;
 }
 
 /* ——— статус-бар ——— */

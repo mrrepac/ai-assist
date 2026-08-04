@@ -39,7 +39,8 @@ import {
   StoredData,
   isActionEntry,
   mergeSettings,
-  streamAvailable,
+  providerOf,
+  streamAllowed,
 } from "./types";
 import { ChatHost, ChatView, VIEW_TYPE_CHAT } from "./view";
 
@@ -148,6 +149,22 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       id: "open-chat",
       name: t("cmdOpenChat"),
       callback: () => this.showChat(),
+    });
+
+    this.addCommand({
+      id: "clean-chat",
+      name: t("cmdPrivateChat"),
+      // Alt+2 рядом с быстрым меню на Alt+1 — и занимаются они одной настройкой:
+      // раскладку либо отдаёшь плагину, либо расставляешь сам.
+      hotkeys: this.settings.defaultHotkey ? [{ modifiers: ["Alt"], key: "2" }] : [],
+      callback: () => {
+        this.openChat()
+          .then((view) => {
+            view.newChat(true);
+            if (!Platform.isMobile) view.focusInput();
+          })
+          .catch((e) => new Notice(String(e instanceof Error ? e.message : e)));
+      },
     });
 
     this.addCommand({
@@ -332,6 +349,9 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
         this.history = [];
         this.persistHistory();
       }
+      // Приватный чат — свойство разговора, а разговора больше нет. Приватное окно
+      // тоже не открывается само на следующий день.
+      this.settings.privateChat = false;
       return;
     }
 
@@ -544,6 +564,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     editor: Editor,
     view: MarkdownView,
     ready?: Selection,
+    config?: ApiConfig,
   ): Promise<void> {
     if (this.running) {
       new Notice(t("busyBar"));
@@ -556,6 +577,9 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     this.lastRun = action;
 
     const system = systemFor(action);
+    // Обычно моделью из настроек, но «переделать» умеет позвать другую на один
+    // прогон — не переключая на неё плагин.
+    const cfg = config ?? this.apiConfig();
 
     if (action.mode === "chat") {
       const chatView = await this.openChat();
@@ -569,6 +593,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
         // прошлый фрагмент — целую главу, подхваченную, когда она была
         // выделена, — и он уезжал вместе с выделенным абзацем, за те же деньги.
         quote: null,
+        config,
       });
       return;
     }
@@ -578,7 +603,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     const controller = new AbortController();
     this.running = controller;
 
-    const entry = this.newEntry(action, sel.label);
+    const entry = this.newEntry(action, cfg.model, sel.label);
 
     // Всё, что может бросить, — внутри try: иначе finally не отработает и
     // this.running останется занятым до перезапуска Obsidian.
@@ -588,13 +613,13 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       this.chatView?.renderAction(entry);
 
       const result = await chat(
-        this.apiConfig(),
+        cfg,
         [
           { role: "system", content: system },
           { role: "user", content: sel.text },
         ],
         {
-          stream: this.settings.stream && streamAvailable(this.settings),
+          stream: this.settings.stream && streamAllowed(providerOf(cfg)),
           signal: controller.signal,
           wantUsage: this.settings.showUsage,
           onDelta: (chunk) => {
@@ -610,6 +635,10 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
         return;
       }
       if (!hasText(result.text)) {
+        // В заметку размышления не годятся — это не правленый текст, а рассуждения
+        // о нём. Но показать их надо: за них заплачено, и это всё, что осталось от
+        // запроса. Хвост, а не начало: вывод у модели в конце.
+        if (hasText(result.reasoning)) entry.content = result.reasoning.slice(-LOG_PREVIEW);
         this.finishEntry(entry, "error", t("emptyReply"));
         new Notice(t("emptyReply"));
         return;
@@ -652,7 +681,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
    * и что именно изменилось. Панель может быть закрыта, поэтому запись живёт в
    * истории, а карточка — лишь её отражение.
    */
-  private newEntry(action: AiAction, scope?: string): ActionEntry {
+  private newEntry(action: AiAction, model: string, scope?: string): ActionEntry {
     return {
       kind: "action",
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
@@ -661,6 +690,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       action: scope ? `${shortName(action)} · ${scope}` : shortName(action),
       status: "running",
       content: "",
+      model,
     };
   }
 
@@ -820,7 +850,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
    * Ответ модели — вещь случайная, и «не понравилось» до сих пор означало
    * Ctrl+Z руками плюс поиск того же действия заново.
    */
-  async repeatAction(id: string): Promise<void> {
+  async repeatAction(id: string, config?: ApiConfig): Promise<void> {
     // Занятость проверяем до возврата текста: иначе правка была бы снята, а
     // прогнать её заново runAction отказался бы — и текст остался бы прежним.
     if (this.running) {
@@ -867,7 +897,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       return;
     }
     editor.setSelection(from, to);
-    await this.runAction(record.action, editor, view);
+    await this.runAction(record.action, editor, view, undefined, config);
   }
 
   stopAction(): void {
@@ -1166,8 +1196,61 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   }
 
   /**
-   * Новая заметка в корне хранилища. Существующий файл не трогаем ни при каких
-   * условиях — при совпадении имени берём следующий свободный номер.
+   * Куда положить новую заметку. Пустая строка — корень хранилища; он же
+   * запасной вариант везде, где выбранной папки не оказалось: потерять заметку
+   * хуже, чем положить её не туда.
+   */
+  private async newNoteFolder(): Promise<string> {
+    const s = this.settings;
+    if (s.newNoteFolder === "beside") {
+      const parent = this.centralNote()?.file?.parent?.path ?? "";
+      // Корень у Obsidian зовётся "/", а нам нужна пустая строка: иначе путь
+      // выйдет с двойным слэшем.
+      return parent === "/" ? "" : parent;
+    }
+    if (s.newNoteFolder === "folder") return this.ensureFolder(s.newNoteFolderPath);
+    return "";
+  }
+
+  /**
+   * Папка по пути из настроек, с созданием недостающего.
+   *
+   * Идём по одной ступени и каждую сверяем с уже существующими папками в
+   * нижнем регистре. Иначе «архив/ии» при живом «Архив» заводит вторую папку
+   * рядом с первой — а на Windows, где регистр в именах не различается,
+   * createFolder на этом просто спотыкается.
+   */
+  private async ensureFolder(raw: string): Promise<string> {
+    const wanted = raw
+      .replace(/\\/g, "/")
+      .split("/")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (wanted.length === 0) return "";
+
+    let path = "";
+    for (const part of wanted) {
+      const next = path ? `${path}/${part}` : part;
+      const found = this.app.vault
+        .getAllFolders()
+        .find((f) => f.path.toLowerCase() === next.toLowerCase());
+      if (found) {
+        path = found.path;
+        continue;
+      }
+      try {
+        path = (await this.app.vault.createFolder(next)).path;
+      } catch (e) {
+        new Notice(t("toolFailed", { reason: e instanceof Error ? e.message : String(e) }));
+        return "";
+      }
+    }
+    return path;
+  }
+
+  /**
+   * Новая заметка. Существующий файл не трогаем ни при каких условиях — при
+   * совпадении имени берём следующий свободный номер.
    */
   async createNote(title: string, text: string): Promise<string | null> {
     const safe = title
@@ -1177,13 +1260,16 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       .slice(0, 100);
     if (!safe) return null;
 
+    const folder = await this.newNoteFolder();
+    const dir = folder ? `${folder}/` : "";
+
     // Индекс Obsidian регистрозависим, а файловая система Windows и macOS — нет:
     // «Идеи.md» рядом с «идеи.md» коллизией не считается, и vault.create молча
     // пишет поверх чужой заметки. Поэтому сверяем сами, в нижнем регистре.
     const taken = new Set(this.app.vault.getFiles().map((f) => f.path.toLowerCase()));
-    let path = `${safe}.md`;
+    let path = `${dir}${safe}.md`;
     for (let n = 2; taken.has(path.toLowerCase()); n++) {
-      path = `${safe} ${n}.md`;
+      path = `${dir}${safe} ${n}.md`;
     }
     try {
       const file = await this.app.vault.create(path, text);

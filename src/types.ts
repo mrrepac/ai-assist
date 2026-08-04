@@ -1,5 +1,5 @@
 import { AiAction, defaultActions } from "./actions";
-import { ProviderKind } from "./api";
+import { ApiConfig } from "./api";
 import { DiffSegment } from "./diff";
 import { t } from "./i18n";
 import { isLegacyName, isLegacyPrompt, isLegacySlots, isRetired } from "./legacy";
@@ -12,7 +12,6 @@ export interface ProviderProfile {
 }
 
 export interface AiAssistSettings {
-  kind: ProviderKind;
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -37,10 +36,21 @@ export interface AiAssistSettings {
   showUsage: boolean;
   /** Класть текущую заметку в контекст чата. */
   chatContextNote: boolean;
+  /**
+   * Разговор без плагина: ни заметки, ни инструментов, ни системного промпта —
+   * как в веб-чате провайдера. Нужен, когда спрашивают не про хранилище, а
+   * просто так: всё, что плагин добавляет от себя, там только мешает и стоит
+   * денег. На действия из заметки не распространяется — они сами про неё.
+   */
+  privateChat: boolean;
   /** Давать модели инструменты правки заметок. */
   tools: boolean;
   /** Показывать каждую правку на подтверждение. */
   toolsConfirm: boolean;
+  /** Куда класть новые заметки: сохранённый чат и то, что создала модель. */
+  newNoteFolder: NewNoteFolder;
+  /** Путь для режима «в свою папку». Пустой — всё равно что корень. */
+  newNoteFolderPath: string;
   actions: AiAction[];
   /**
    * Что лежит на цифрах быстрого меню (1…9): id действия,
@@ -68,6 +78,16 @@ export interface AiAssistSettings {
    */
   defaultHotkey: boolean;
 }
+
+/**
+ * Куда ложатся новые заметки:
+ *  root   — в корень хранилища;
+ *  folder — в одну заданную папку, она же создаётся, если её нет;
+ *  beside — рядом с заметкой, над которой шла работа.
+ */
+export type NewNoteFolder = "root" | "folder" | "beside";
+
+export const NEW_NOTE_FOLDERS: NewNoteFolder[] = ["root", "folder", "beside"];
 
 /** Спецпункт быстрого меню — не действие, а отдельная команда плагина. */
 export const QUICK_ASK = "@ask";
@@ -131,6 +151,11 @@ export interface ActionEntry {
   added?: number;
   removed?: number;
   usage?: { prompt: number; completion: number };
+  /**
+   * Чем правили. Обычно это модель из настроек, но «переделать» умеет позвать
+   * другую — и тогда без подписи не понять, чем вышло лучше.
+   */
+  model?: string;
   error?: string;
   undone?: boolean;
 }
@@ -151,20 +176,20 @@ export interface StoredData {
   history?: HistoryItem[];
 }
 
-export const DEEPSEEK_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro"];
+/** С какой модели DeepSeek начинать: подсказка в настройках и умолчание. */
+export const DEEPSEEK_MODEL = "deepseek-v4-flash";
 
 /**
  * Готовые провайдеры. Всё это OpenAI-совместимые адреса, поэтому пресет только
- * подставляет URL — работает с ними один и тот же клиент. Отдельный kind нужен
- * лишь DeepSeek: у него есть свои поля сверх общего формата.
+ * подставляет URL — работает с ними один и тот же клиент.
  */
-export const PROVIDERS: Record<string, { kind: ProviderKind; baseUrl: string }> = {
-  deepseek: { kind: "deepseek", baseUrl: "https://api.deepseek.com" },
-  chadgpt: { kind: "openai", baseUrl: "https://ask.chadgpt.ru/api/v1" },
-  gptunnel: { kind: "openai", baseUrl: "https://gptunnel.ru/v1" },
-  polza: { kind: "openai", baseUrl: "https://api.polza.ai/api/v1" },
+export const PROVIDERS: Record<string, { baseUrl: string }> = {
+  deepseek: { baseUrl: "https://api.deepseek.com" },
+  chadgpt: { baseUrl: "https://ask.chadgpt.ru/api/v1" },
+  gptunnel: { baseUrl: "https://gptunnel.ru/v1" },
+  polza: { baseUrl: "https://api.polza.ai/api/v1" },
   // Локальный сервер — в конец списка: у него свой разговор про ключ и порт.
-  ollama: { kind: "openai", baseUrl: "http://localhost:11434/v1" },
+  ollama: { baseUrl: "http://localhost:11434/v1" },
 };
 
 /**
@@ -186,7 +211,30 @@ export function providerRank(name: string): number {
  * мимо браузерных ограничений.
  */
 export function streamAvailable(settings: AiAssistSettings): boolean {
-  return providerOf(settings) !== "chadgpt";
+  return streamAllowed(providerOf(settings));
+}
+
+/** То же по имени провайдера: разовый прогон идёт мимо активных настроек. */
+export function streamAllowed(provider: string): boolean {
+  return provider !== "chadgpt";
+}
+
+/**
+ * Настройки запроса под чужой профиль. Нужны, чтобы переспросить другой
+ * моделью, не переключая на неё плагин: выбор в меню — дело разовое, а
+ * следующий вопрос должен уйти тем, чем уходил до сих пор.
+ * null — у профиля нет модели, и спрашивать нечем.
+ */
+export function configFor(s: AiAssistSettings, provider: string): ApiConfig | null {
+  const profile = s.profiles[provider];
+  if (!profile?.model) return null;
+  return {
+    baseUrl: profile.baseUrl || PROVIDERS[provider]?.baseUrl || "",
+    apiKey: profile.apiKey,
+    model: profile.model,
+    temperature: s.temperature,
+    maxTokens: s.maxTokens,
+  };
 }
 
 /** Человеческое имя провайдера — для настроек и для меню в шапке панели. */
@@ -207,20 +255,23 @@ export function providerLabel(name: string): string {
   }
 }
 
-/** Какой пресет выбран сейчас — определяем по адресу, отдельно не храним. */
-export function providerOf(settings: AiAssistSettings): string {
+/**
+ * Какой пресет выбран сейчас — определяем по адресу, отдельно не храним.
+ * Берём только baseUrl: тот же расчёт нужен и разовому прогону чужой моделью,
+ * у которого на руках не настройки, а один конфиг запроса.
+ */
+export function providerOf(s: { baseUrl: string }): string {
   for (const [name, p] of Object.entries(PROVIDERS)) {
-    if (settings.baseUrl.replace(/\/+$/, "") === p.baseUrl) return name;
+    if (s.baseUrl.replace(/\/+$/, "") === p.baseUrl) return name;
   }
   return "custom";
 }
 
 export function defaultSettings(): AiAssistSettings {
   return {
-    kind: "deepseek",
     baseUrl: "https://api.deepseek.com",
     apiKey: "",
-    model: DEEPSEEK_MODELS[0],
+    model: DEEPSEEK_MODEL,
     profiles: {},
     temperature: 0.3,
     maxTokens: 0,
@@ -232,8 +283,11 @@ export function defaultSettings(): AiAssistSettings {
     warnOver: 20000,
     showUsage: true,
     chatContextNote: false,
+    privateChat: false,
     tools: true,
     toolsConfirm: true,
+    newNoteFolder: "root",
+    newNoteFolderPath: "",
     actions: defaultActions(),
     quickSlots: ["spelling", "expand", "clarify", "shorten", "evaluate"],
     // Два пункта, а не весь список действий: контекстное меню общее для всех
@@ -256,10 +310,9 @@ export function switchProvider(s: AiAssistSettings, name: string): void {
   s.profiles[providerOf(s)] = { apiKey: s.apiKey, model: s.model, baseUrl: s.baseUrl };
   const saved = s.profiles[name];
   const preset = PROVIDERS[name];
-  s.kind = preset ? preset.kind : "openai";
   s.baseUrl = preset ? preset.baseUrl : saved?.baseUrl ?? "";
   s.apiKey = saved?.apiKey ?? "";
-  s.model = saved?.model ?? (name === "deepseek" ? DEEPSEEK_MODELS[0] : "");
+  s.model = saved?.model ?? (name === "deepseek" ? DEEPSEEK_MODEL : "");
 }
 
 /**
@@ -280,11 +333,10 @@ export function mergeSettings(raw: unknown): AiAssistSettings {
     typeof s.warnOver === "number" && Number.isFinite(s.warnOver)
       ? Math.max(0, Math.round(s.warnOver))
       : base.warnOver;
-  merged.kind = merged.kind === "openai" ? "openai" : "deepseek";
 
   // Встроенные действия должны быть на месте даже после ручной правки data.json,
   // а пользовательские — пережить обновление плагина.
-  const stored = Array.isArray(s.actions) ? s.actions.filter(isAction) : [];
+  const stored = Array.isArray(s.actions) ? s.actions.filter(isAction).map(cleanAction) : [];
   const builtins = defaultActions().map((def) => {
     const found = stored.find((a) => a.id === def.id);
     if (!found) return def;
@@ -330,6 +382,9 @@ export function mergeSettings(raw: unknown): AiAssistSettings {
   merged.draft = typeof s.draft === "string" ? s.draft : "";
 
   if (!EDITOR_MENU_MODES.includes(merged.editorMenu)) merged.editorMenu = base.editorMenu;
+
+  if (!NEW_NOTE_FOLDERS.includes(merged.newNoteFolder)) merged.newNoteFolder = base.newNoteFolder;
+  merged.newNoteFolderPath = typeof s.newNoteFolderPath === "string" ? s.newNoteFolderPath : "";
 
   // Раньше поведение без выделения было переключателем «брать абзац». Смотрим
   // именно на сохранённое поле: у merged значение уже подставлено из умолчаний,
@@ -390,6 +445,23 @@ function cleanList(raw: unknown): string[] {
 function isAction(a: unknown): a is AiAction {
   const x = a as AiAction;
   return !!x && typeof x.id === "string" && typeof x.prompt === "string";
+}
+
+/**
+ * Действие из data.json с проверенными полями. Из всех у него обязательны
+ * только id и промпт: остальное дописывалось в разные версии, да и файл правят
+ * руками. Пустое имя тут дороже, чем кажется, — по нему считают подпись в
+ * журнале, и без этой чистки одно недостающее поле роняло загрузку плагина
+ * целиком, вместе с настройками и лентой.
+ */
+function cleanAction(a: AiAction): AiAction {
+  const mode = a.mode === "append" || a.mode === "chat" ? a.mode : "replace";
+  return {
+    ...a,
+    name: typeof a.name === "string" && a.name.trim() ? a.name : t("actNewName"),
+    mode,
+    icon: typeof a.icon === "string" && a.icon.trim() ? a.icon : "sparkles",
+  };
 }
 
 function clamp(v: number, min: number, max: number, fallback: number): number {

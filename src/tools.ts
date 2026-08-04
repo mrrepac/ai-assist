@@ -66,7 +66,9 @@ export function toolSpecs(): ToolSpec[] {
         name: "read_note",
         description:
           "Read the note the user currently has open in the editor. Call this before editing " +
-          "when you need to know what is already written there.",
+          "when you need to know what is already written there. Do not call it to answer a " +
+          "question that is not about that note — most questions are not, and reading it " +
+          "costs the user a whole extra round trip.",
         parameters: { type: "object", properties: {} },
       },
     },
@@ -203,72 +205,85 @@ export function parseCall(call: ToolCall, notePath: string | null): ParsedCall {
   };
 }
 
-/** Выполняет вызов и возвращает текст результата — его читает модель. */
-export async function runCall(host: ToolHost, parsed: ParsedCall): Promise<string> {
+/**
+ * Чем кончился вызов. Текст пишется для модели, а ok — для карточки в панели:
+ * по одному тексту нельзя отличить сделанную правку от несделанной, а карточка
+ * обязана показывать разное.
+ */
+export interface CallResult {
+  ok: boolean;
+  text: string;
+}
+
+const done = (text: string): CallResult => ({ ok: true, text });
+const failed = (text: string): CallResult => ({ ok: false, text });
+
+/** Выполняет вызов и возвращает результат — его текст читает модель. */
+export async function runCall(host: ToolHost, parsed: ParsedCall): Promise<CallResult> {
   const text = typeof parsed.args.text === "string" ? parsed.args.text : "";
   const path = parsed.path;
   switch (parsed.name) {
     case "read_note": {
       const note = host.readNote();
-      if (!note) return "No note is open.";
+      if (!note) return failed("No note is open.");
       // Про обрезку говорим прямо: иначе модель примет начало за весь текст и
       // станет переписывать заметку по половине.
       const tail = note.clipped ? "\n\n[The note is longer — only the beginning is shown.]" : "";
-      return `Note "${note.path}":\n\n${note.text}${tail}`;
+      return done(`Note "${note.path}":\n\n${note.text}${tail}`);
     }
     case "insert_text":
-      if (!text) return "Nothing to insert: the text argument was empty.";
-      if (!path) return "Failed: no note is open.";
+      if (!text) return failed("Nothing to insert: the text argument was empty.");
+      if (!path) return failed("Failed: no note is open.");
       return host.insertText(text, path)
-        ? `Inserted at the cursor in "${path}".`
-        : `Failed: "${path}" is no longer the open note.`;
+        ? done(`Inserted at the cursor in "${path}".`)
+        : failed(`Failed: "${path}" is no longer the open note.`);
     case "replace_in_note": {
       const find = typeof parsed.args.find === "string" ? parsed.args.find : "";
       const replace = typeof parsed.args.replace === "string" ? parsed.args.replace : "";
-      if (!find) return "Nothing to look for: the find argument was empty.";
-      if (!path) return "Failed: no note is open.";
+      if (!find) return failed("Nothing to look for: the find argument was empty.");
+      if (!path) return failed("Failed: no note is open.");
       switch (host.replaceInNote(find, replace, path)) {
         case "ok":
-          return `Replaced that fragment in "${path}".`;
+          return done(`Replaced that fragment in "${path}".`);
         case "missing":
-          return (
+          return failed(
             "Failed: that exact text is not in the note. Call read_note and copy the " +
-            "fragment character for character, including punctuation and line breaks."
+              "fragment character for character, including punctuation and line breaks.",
           );
         case "many":
-          return (
+          return failed(
             "Failed: that text occurs more than once in the note. Make `find` longer, so " +
-            "that it matches exactly one place."
+              "that it matches exactly one place.",
           );
         default:
-          return `Failed: "${path}" is no longer the open note.`;
+          return failed(`Failed: "${path}" is no longer the open note.`);
       }
     }
     case "replace_note":
-      if (!text) return "Nothing to write: the text argument was empty.";
-      if (!path) return "Failed: no note is open.";
+      if (!text) return failed("Nothing to write: the text argument was empty.");
+      if (!path) return failed("Failed: no note is open.");
       return host.replaceNote(text, path)
-        ? `Rewrote "${path}".`
-        : `Failed: "${path}" is no longer the open note.`;
+        ? done(`Rewrote "${path}".`)
+        : failed(`Failed: "${path}" is no longer the open note.`);
     case "replace_selection":
-      if (!text) return "Nothing to write: the text argument was empty.";
-      if (!path) return "Failed: no note is open.";
+      if (!text) return failed("Nothing to write: the text argument was empty.");
+      if (!path) return failed("Failed: no note is open.");
       return host.replaceSelection(text, path)
-        ? `Selection replaced in "${path}".`
-        : `Failed: nothing is selected in "${path}", or it is no longer the open note.`;
+        ? done(`Selection replaced in "${path}".`)
+        : failed(`Failed: nothing is selected in "${path}", or it is no longer the open note.`);
     case "append_to_note":
-      if (!text) return "Nothing to append: the text argument was empty.";
-      if (!path) return "Failed: no note is open.";
+      if (!text) return failed("Nothing to append: the text argument was empty.");
+      if (!path) return failed("Failed: no note is open.");
       return host.appendToNote(text, path)
-        ? `Appended to "${path}".`
-        : `Failed: "${path}" is no longer the open note.`;
+        ? done(`Appended to "${path}".`)
+        : failed(`Failed: "${path}" is no longer the open note.`);
     case "create_note": {
       const title = typeof parsed.args.title === "string" ? parsed.args.title : "";
-      if (!title || !text) return "Failed: both title and text are required.";
-      const path = await host.createNote(title, text);
-      return path ? `Created note "${path}".` : "Failed to create the note.";
+      if (!title || !text) return failed("Failed: both title and text are required.");
+      const created = await host.createNote(title, text);
+      return created ? done(`Created note "${created}".`) : failed("Failed to create the note.");
     }
     default:
-      return `Unknown tool "${parsed.call.name}".`;
+      return failed(`Unknown tool "${parsed.call.name}".`);
   }
 }
