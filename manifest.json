@@ -1,7 +1,7 @@
 {
   "id": "ai-assist",
   "name": "RU AI Assist",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "minAppVersion": "1.8.7",
   "description": "Чат с ИИ в боковой панели и правка выделенного текста прямо в заметке. Собраны нейросети и агрегаторы, доступные из России без VPN: DeepSeek, Polza.ai, ChadGPT, GPTunnel, локальные модели. AI chat and in-place text rewriting in your notes.",
   "author": "mrrepac",
