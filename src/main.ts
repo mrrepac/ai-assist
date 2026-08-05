@@ -37,8 +37,12 @@ import {
   QUICK_ASK,
   StoredChatMessage,
   StoredData,
+  activeConfig,
+  configFor,
   isActionEntry,
   mergeSettings,
+  panelConfig,
+  providerLabel,
   providerOf,
   streamAllowed,
 } from "./types";
@@ -117,10 +121,25 @@ interface EditTarget {
   view: MarkdownView;
 }
 
+/**
+ * Правка, оборванная на пределе длины модели. В карточку журнала кладётся
+ * только начало ответа, а дописывать надо от последнего символа — поэтому
+ * полный текст живёт здесь, в памяти сессии.
+ */
+interface Unfinished {
+  target: EditTarget;
+  cfg: ApiConfig;
+  system: string;
+  /** Всё, что модель успела написать, — целиком, без обрезки для карточки. */
+  text: string;
+}
+
 export default class AiAssistPlugin extends Plugin implements ChatHost {
   settings!: AiAssistSettings;
   history: HistoryItem[] = [];
   private undoable = new Map<string, UndoRecord>();
+  /** Оборванные правки, которые ещё можно дописать. Живут до перезапуска. */
+  private unfinished = new Map<string, Unfinished>();
 
   private statusEl: HTMLElement | null = null;
   private mobileNotice: Notice | null = null;
@@ -358,7 +377,11 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     // Obsidian могли закрыть посреди правки — иначе запись навсегда осталась бы
     // «идёт…», с живой кнопкой «Стоп» для запроса, которого давно нет.
     for (const item of this.history) {
-      if (isActionEntry(item) && item.status === "running") item.status = "stopped";
+      if (!isActionEntry(item)) continue;
+      if (item.status === "running") item.status = "stopped";
+      // Дописывать нечего: начало ответа лежало в памяти сессии, а её больше
+      // нет. Кнопка «Дописать» тут обещала бы то, чего не сделает.
+      item.truncated = false;
     }
   }
 
@@ -572,14 +595,22 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     }
     const sel = ready ? await this.confirmSize(ready) : await this.grabConfirmed(editor);
     if (!sel) return;
+    // Вопрос про длину — это модальное окно, и пока оно висело, правку могли
+    // запустить ещё раз. Без этой проверки два прогона перетирали друг другу
+    // this.running, и «Стоп» доставался только последнему.
+    if (this.running) {
+      new Notice(t("busyBar"));
+      return;
+    }
 
     const target: EditTarget = { action, sel, filePath: view.file?.path ?? "", editor, view };
     this.lastRun = action;
 
     const system = systemFor(action);
-    // Обычно моделью из настроек, но «переделать» умеет позвать другую на один
-    // прогон — не переключая на неё плагин.
-    const cfg = config ?? this.apiConfig();
+    // Чем прогонять: обычно тем, что стоит в шапке панели, но у действия может
+    // быть своя модель, а «переделать» умеет позвать третью на один прогон.
+    const cfg = config ?? this.configForAction(action);
+    if (!cfg) return;
 
     if (action.mode === "chat") {
       const chatView = await this.openChat();
@@ -593,7 +624,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
         // прошлый фрагмент — целую главу, подхваченную, когда она была
         // выделена, — и он уезжал вместе с выделенным абзацем, за те же деньги.
         quote: null,
-        config,
+        config: cfg,
       });
       return;
     }
@@ -647,8 +678,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       // В заметку он не пойдёт: замена выглядела бы как обычная правка, а на
       // деле стёрла бы половину текста. Сам ответ остаётся в карточке.
       if (result.truncated) {
-        entry.content = result.text.slice(0, LOG_PREVIEW);
-        this.finishEntry(entry, "error", t("cutOff"));
+        this.holdUnfinished(entry, { target, cfg, system, text: result.text });
         new Notice(t("cutOff"), 10000);
         return;
       }
@@ -904,6 +934,114 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     this.running?.abort();
   }
 
+  /**
+   * Отложить оборванную правку: карточка помечается «оборвано» и получает
+   * кнопку «Дописать», а полный текст остаётся в памяти. Хвост карточки — конец
+   * ответа, а не начало: дописывать будут от него, и по нему видно, где встали.
+   */
+  private holdUnfinished(entry: ActionEntry, held: Unfinished): void {
+    this.unfinished.set(entry.id, held);
+    // Тот же предел, что у карты отмены: в каждой записи целый текст, и на
+    // большой заметке это мегабайты.
+    while (this.unfinished.size > UNDO_LIMIT) {
+      const oldest = this.unfinished.keys().next().value;
+      if (oldest === undefined) break;
+      this.unfinished.delete(oldest);
+    }
+    entry.content = held.text.slice(-LOG_PREVIEW);
+    entry.truncated = true;
+    this.finishEntry(entry, "error", t("cutOff"));
+  }
+
+  /**
+   * Дописать оборванную правку и применить целиком. Ответ модели обрывается на
+   * длинной заметке регулярно, и до сих пор весь прогон уходил впустую: за
+   * половину заплачено, а в заметку она не годится.
+   */
+  async continueAction(id: string): Promise<void> {
+    if (this.running) {
+      new Notice(t("busyBar"));
+      return;
+    }
+    const held = this.unfinished.get(id);
+    const entry = this.history.find(
+      (item): item is ActionEntry => isActionEntry(item) && item.id === id,
+    );
+    if (!held || !entry) {
+      new Notice(t("logContinueGone"));
+      return;
+    }
+
+    const controller = new AbortController();
+    this.running = controller;
+    const { target, cfg, system } = held;
+    const action = target.action;
+
+    entry.status = "running";
+    entry.error = undefined;
+    this.chatView?.renderAction(entry);
+
+    try {
+      this.showBusy(shortName(action), 0);
+      const result = await chat(
+        cfg,
+        [
+          { role: "system", content: system },
+          { role: "user", content: target.sel.text },
+          // То, что уже написано, — репликой модели: продолжать она должна свой
+          // текст, а не начинать заново.
+          { role: "assistant", content: held.text },
+          { role: "user", content: t("chatContinuePrompt") },
+        ],
+        {
+          stream: this.settings.stream && streamAllowed(providerOf(cfg)),
+          signal: controller.signal,
+          wantUsage: this.settings.showUsage,
+          onDelta: (chunk) => {
+            this.showBusy(shortName(action), chunk.length);
+            entry.content = (entry.content + chunk).slice(-LOG_PREVIEW);
+            this.chatView?.renderAction(entry);
+          },
+        },
+      );
+
+      if (controller.signal.aborted) {
+        // Остановили руками — то, что успело прийти, дописываем к отложенному:
+        // следующая попытка начнёт с него, а не с прежнего места.
+        held.text += result.text;
+        this.holdUnfinished(entry, held);
+        return;
+      }
+      held.text += result.text;
+      // Модель может не уложиться и во второй раз — тогда просто предлагаем
+      // дописать снова, уже от нового конца.
+      if (result.truncated) {
+        this.holdUnfinished(entry, held);
+        new Notice(t("cutOff"), 10000);
+        return;
+      }
+
+      const replacement = cleanReply(held.text, target.sel.text);
+      this.unfinished.delete(id);
+      if (replacement === target.sel.text) {
+        entry.truncated = false;
+        this.finishEntry(entry, "unchanged");
+        new Notice(t("unchanged", { action: shortName(action) }));
+        return;
+      }
+      entry.truncated = false;
+      this.applyResult(entry, target, replacement, result.usage);
+    } catch (e) {
+      const message = e instanceof ApiError ? e.message : String(e);
+      // Отложенное не выбрасываем: сеть отвалилась — попробуют ещё раз.
+      this.holdUnfinished(entry, held);
+      if (!controller.signal.aborted) new Notice(message, 8000);
+    } finally {
+      if (this.running === controller) this.running = null;
+      this.hideBusy();
+    }
+  }
+
   /** Окно над выделением: пресеты на цифрах плюс поле для своего промпта. */
   private openQuickMenu(editor: Editor, view: MarkdownView): void {
     const sel = this.grabSelection(editor);
@@ -1059,13 +1197,42 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   // ——————————————————————— ChatHost ———————————————————————
 
   apiConfig(): ApiConfig {
-    return {
-      baseUrl: this.settings.baseUrl,
-      apiKey: this.settings.apiKey,
-      model: this.settings.model,
-      temperature: this.settings.temperature,
-      maxTokens: this.settings.maxTokens,
-    };
+    return panelConfig(this.settings);
+  }
+
+  /**
+   * Чем отвечает панель прямо сейчас. Отдельно от `apiConfig()`, потому что тот
+   * нужен настройкам: кнопки «Получить список» и «Проверить» обязаны проверять
+   * ровно того провайдера, которого в этот момент настраивают, а не того, к
+   * кому ушёл бы вопрос из панели.
+   *
+   * Приватный чат может ходить своей моделью. Её нет или она не настроена —
+   * отвечает та же, что и обычно: приватность держится на том, что из
+   * хранилища ничего не уходит, и от выбора модели не зависит.
+   */
+  chatConfig(): ApiConfig {
+    return activeConfig(this.settings);
+  }
+
+  /**
+   * Чем прогонять действие. Обычно тем, что стоит в шапке панели, но у действия
+   * может быть свой провайдер — дешёвая модель на орфографию, сильная на разбор,
+   * поисковая на факты.
+   *
+   * Провайдер выбран, а модели у него нет — говорим вслух и не запускаем.
+   * Молча уйти к тому, что в шапке, было бы подменой: действие, заведённое ради
+   * поиска в вебе, отвечало бы из головы, и заметил бы это уже пользователь.
+   */
+  private configForAction(action: AiAction): ApiConfig | null {
+    const name = action.provider;
+    if (!name) return this.apiConfig();
+    const cfg = configFor(this.settings, name);
+    if (cfg) return cfg;
+    new Notice(
+      t("actProviderGone", { action: shortName(action), provider: providerLabel(name) }),
+      8000,
+    );
+    return null;
   }
 
   /**

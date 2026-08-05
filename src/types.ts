@@ -1,5 +1,5 @@
 import { AiAction, defaultActions } from "./actions";
-import { ApiConfig } from "./api";
+import { ApiConfig, Source, listModels } from "./api";
 import { DiffSegment } from "./diff";
 import { t } from "./i18n";
 import { isLegacyName, isLegacyPrompt, isLegacySlots, isRetired } from "./legacy";
@@ -43,6 +43,15 @@ export interface AiAssistSettings {
    * денег. На действия из заметки не распространяется — они сами про неё.
    */
   privateChat: boolean;
+  /**
+   * Чьей моделью отвечает приватный чат. Пусто — той же, что в шапке.
+   *
+   * Зачем отдельно: приватный разговор заводят не для работы с заметками, а
+   * чтобы спросить «просто так», и модель там нужна другая — обычно подешевле
+   * или та, которой не жалко чужого вопроса. Держать это в шапке значит
+   * переключать её на входе и на выходе, и однажды забыть на выходе.
+   */
+  privateProvider: string;
   /** Давать модели инструменты правки заметок. */
   tools: boolean;
   /** Показывать каждую правку на подтверждение. */
@@ -53,8 +62,8 @@ export interface AiAssistSettings {
   newNoteFolderPath: string;
   actions: AiAction[];
   /**
-   * Что лежит на цифрах быстрого меню (1…9): id действия,
-   * спецпункт (@ask, @translate-to) или пустая строка.
+   * Что лежит на цифрах быстрого меню (1…9): id действия, спецпункт (@ask)
+   * или пустая строка.
    */
   quickSlots: string[];
   /** Что плагин добавляет в контекстное меню редактора над выделением. */
@@ -121,6 +130,17 @@ export interface StoredChatMessage {
   /** Расход на этот ответ: иначе после перезагрузки панели счёт пропадал. */
   usage?: { prompt: number; completion: number; cached: number };
   /**
+   * Ссылки, на которых построен ответ. Хранятся вместе с ним: у поискового
+   * ответа без источников нельзя проверить ни одного утверждения, а после
+   * перезагрузки панели они пропадали бы вместе с запросом.
+   */
+  sources?: Source[];
+  /**
+   * Ответ оборван на пределе длины. Отдельным полем, а не по виду текста:
+   * по нему кнопка «Продолжить» живёт и после перезагрузки панели.
+   */
+  truncated?: boolean;
+  /**
    * Чей это ответ. Модель переключается прямо из шапки панели, и через десять
    * реплик уже не вспомнить, кто что сказал.
    */
@@ -158,6 +178,12 @@ export interface ActionEntry {
   model?: string;
   error?: string;
   undone?: boolean;
+  /**
+   * Модель упёрлась в предел длины и не дописала. Такой ответ в заметку не
+   * идёт, но его можно дозапросить — пока плагин помнит начало, у карточки
+   * есть кнопка «Продолжить».
+   */
+  truncated?: boolean;
 }
 
 export type HistoryItem = StoredChatMessage | ActionEntry;
@@ -188,9 +214,45 @@ export const PROVIDERS: Record<string, { baseUrl: string }> = {
   chadgpt: { baseUrl: "https://ask.chadgpt.ru/api/v1" },
   gptunnel: { baseUrl: "https://gptunnel.ru/v1" },
   polza: { baseUrl: "https://api.polza.ai/api/v1" },
+  perplexity: { baseUrl: "https://api.perplexity.ai" },
   // Локальный сервер — в конец списка: у него свой разговор про ключ и порт.
   ollama: { baseUrl: "http://localhost:11434/v1" },
 };
+
+/**
+ * Модели, которые провайдер по имени не отдаёт. Обычный путь — спросить у него
+ * GET /models, но у Perplexity такого метода нет вовсе, и кнопка «Получить
+ * список» упиралась бы в 404 с подписью «по этому адресу такой модели нет» —
+ * то есть врала бы дважды.
+ *
+ * Список короткий и меняется редко; поле модели всё равно остаётся текстовым,
+ * так что новое имя можно вписать руками, не дожидаясь обновления плагина.
+ */
+export const BUILTIN_MODELS: Record<string, string[]> = {
+  perplexity: ["sonar", "sonar-pro", "sonar-reasoning-pro", "sonar-deep-research"],
+};
+
+/** Готовый список моделей провайдера, если спрашивать у него нечего. */
+export function builtinModels(provider: string): string[] | null {
+  return BUILTIN_MODELS[provider] ?? null;
+}
+
+/**
+ * Модели провайдера для кнопки «Получить список». У кого есть метод — спросим
+ * его, у кого нет — отдадим готовый список, не тратя запрос впустую.
+ */
+export async function modelsFor(cfg: ApiConfig): Promise<string[]> {
+  return builtinModels(providerOf(cfg)) ?? listModels(cfg);
+}
+
+/**
+ * Умеет ли провайдер function calling. Perplexity — поисковик с моделью
+ * поверх, инструментов у неё нет: запрос с ними отлетает четырёхсотой, и
+ * получалось бы, что при выбранной Perplexity плагин не работает вовсе.
+ */
+export function toolsAllowed(provider: string): boolean {
+  return provider !== "perplexity";
+}
 
 /**
  * Порядок, в котором провайдеры показываются везде. Ключи объекта перебираются
@@ -237,6 +299,31 @@ export function configFor(s: AiAssistSettings, provider: string): ApiConfig | nu
   };
 }
 
+/** Настройки запроса из шапки панели — то, что вписано в настройках. */
+export function panelConfig(s: AiAssistSettings): ApiConfig {
+  return {
+    baseUrl: s.baseUrl,
+    apiKey: s.apiKey,
+    model: s.model,
+    temperature: s.temperature,
+    maxTokens: s.maxTokens,
+  };
+}
+
+/**
+ * Чем отвечает панель прямо сейчас. У приватного чата может быть своя модель:
+ * его заводят, чтобы спросить не про хранилище, и держать ради этого нужную
+ * модель в шапке — значит переключать её на входе и на выходе.
+ *
+ * Своей модели нет или она не настроена — отвечает та же, что и обычно.
+ * Приватность держится на том, что из хранилища ничего не уходит, и от того,
+ * какая модель отвечает, не зависит: подменять здесь нечего.
+ */
+export function activeConfig(s: AiAssistSettings): ApiConfig {
+  if (!s.privateChat || !s.privateProvider) return panelConfig(s);
+  return configFor(s, s.privateProvider) ?? panelConfig(s);
+}
+
 /** Человеческое имя провайдера — для настроек и для меню в шапке панели. */
 export function providerLabel(name: string): string {
   switch (name) {
@@ -248,6 +335,8 @@ export function providerLabel(name: string): string {
       return t("setProviderChad");
     case "gptunnel":
       return t("setProviderTunnel");
+    case "perplexity":
+      return t("setProviderPerplexity");
     case "ollama":
       return t("setProviderOllama");
     default:
@@ -284,6 +373,7 @@ export function defaultSettings(): AiAssistSettings {
     showUsage: true,
     chatContextNote: false,
     privateChat: false,
+    privateProvider: "",
     tools: true,
     toolsConfirm: true,
     newNoteFolder: "root",
@@ -312,7 +402,17 @@ export function switchProvider(s: AiAssistSettings, name: string): void {
   const preset = PROVIDERS[name];
   s.baseUrl = preset ? preset.baseUrl : saved?.baseUrl ?? "";
   s.apiKey = saved?.apiKey ?? "";
-  s.model = saved?.model ?? (name === "deepseek" ? DEEPSEEK_MODEL : "");
+  s.model = saved?.model ?? defaultModel(name);
+}
+
+/**
+ * С какой модели начинать у нового провайдера. Пусто — имена придётся спросить
+ * у него самого: угадать их нельзя, и подставленное наугад имя дало бы отказ
+ * «нет такой модели» вместо честного «выбери».
+ */
+function defaultModel(name: string): string {
+  if (name === "deepseek") return DEEPSEEK_MODEL;
+  return builtinModels(name)?.[0] ?? "";
 }
 
 /**
@@ -377,6 +477,8 @@ export function mergeSettings(raw: unknown): AiAssistSettings {
   // остаться: новая установка получает выключенный хоткей, прежняя — включённый.
   if (typeof s.defaultHotkey !== "boolean") merged.defaultHotkey = true;
 
+  merged.privateProvider = typeof s.privateProvider === "string" ? s.privateProvider : "";
+
   merged.recentPrompts = cleanList(s.recentPrompts);
   merged.recentAsks = cleanList(s.recentAsks);
   merged.draft = typeof s.draft === "string" ? s.draft : "";
@@ -394,9 +496,9 @@ export function mergeSettings(raw: unknown): AiAssistSettings {
     merged.noSelection = old === false ? "none" : base.noSelection;
   }
 
-  // Слотов ровно QUICK_SLOT_COUNT, и в них не должно остаться ссылок на
-  // удалённые действия. Набор, доставшийся от прошлой версии, заменяем новым:
-  // иначе обновлённые заготовки увидят только те, кто ставит плагин впервые.
+  // В слотах не должно остаться ссылок на удалённые действия. Набор,
+  // доставшийся от прошлой версии, заменяем новым: иначе обновлённые заготовки
+  // увидят только те, кто ставит плагин впервые.
   const storedSlots = Array.isArray(s.quickSlots) ? s.quickSlots : base.quickSlots;
   const slots = isLegacySlots(storedSlots) ? base.quickSlots : storedSlots;
   // Клавиш ровно столько, сколько пользователь себе завёл: пять по умолчанию,
@@ -461,6 +563,8 @@ function cleanAction(a: AiAction): AiAction {
     name: typeof a.name === "string" && a.name.trim() ? a.name : t("actNewName"),
     mode,
     icon: typeof a.icon === "string" && a.icon.trim() ? a.icon : "sparkles",
+    // Пусто и отсутствующее поле — одно и то же: прогоняем тем, что в шапке.
+    provider: typeof a.provider === "string" ? a.provider : "",
   };
 }
 

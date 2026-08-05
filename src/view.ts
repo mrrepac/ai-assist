@@ -8,7 +8,8 @@ import {
   WorkspaceLeaf,
   setIcon,
 } from "obsidian";
-import { ApiConfig, ApiError, ChatMessage, Usage, chat, listModels } from "./api";
+import { ApiConfig, ApiError, ChatMessage, Source, Usage, chat } from "./api";
+import { stripCitations } from "./cite";
 import { DiffResult, diffWords } from "./diff";
 import { contextWindow, messageText } from "./history";
 import { t } from "./i18n";
@@ -23,11 +24,13 @@ import {
   StoredChatMessage,
   configFor,
   isActionEntry,
+  modelsFor,
   providerLabel,
   providerOf,
   providerRank,
   streamAllowed,
   switchProvider,
+  toolsAllowed,
 } from "./types";
 
 /** Сколько раз подряд модель может ходить за инструментами в одном запросе. */
@@ -53,6 +56,8 @@ export interface ChatHost extends ToolHost {
   app: App;
   settings: AiAssistSettings;
   apiConfig(): ApiConfig;
+  /** Чем отвечает панель сейчас: у приватного чата может быть своя модель. */
+  chatConfig(): ApiConfig;
   history: HistoryItem[];
   persistHistory(): void;
   /** Записать настройки: панель меняет модель и провайдера прямо из шапки. */
@@ -67,6 +72,8 @@ export interface ChatHost extends ToolHost {
   undoAction(id: string): Promise<boolean>;
   /** Вернуть текст и прогнать по нему то же действие ещё раз, можно и другой моделью. */
   repeatAction(id: string, config?: ApiConfig): Promise<void>;
+  /** Дописать правку, оборванную на пределе длины, и применить целиком. */
+  continueAction(id: string): Promise<void>;
   /** Прервать идущую правку выделенного. */
   stopAction(): void;
   /** Текст активной заметки, если контекст включён; clipped — отдано началом. */
@@ -119,6 +126,14 @@ export class ChatView extends ItemView {
   private controller: AbortController | null = null;
   /** Карточки журнала по id записи — чтобы обновлять их на ходу, а не рисовать заново. */
   private actionEls = new Map<string, HTMLElement>();
+  /**
+   * Пузырь, в котором нарисован ответ. Нужен, чтобы дописать оборванный ответ
+   * в него же, а не отдельной репликой. Ключом сама реплика: считать пузыри по
+   * месту в ленте нельзя — её правят кнопками под сообщениями, и номер
+   * разъезжается с разметкой. Слабая карта — снятые реплики не должны держаться
+   * в памяти до перезапуска.
+   */
+  private msgEls = new WeakMap<StoredChatMessage, HTMLElement>();
   /** Выделение, о котором пойдёт вопрос. Показано плашкой над полем ввода. */
   private attached: { path: string; text: string } | null = null;
   /** Снятый крестиком фрагмент: пока выделение то же, обратно не подхватываем. */
@@ -154,7 +169,9 @@ export class ChatView extends ItemView {
     const bar = root.createDiv({ cls: "ai-bar" });
     // Имя модели — кнопка: менять модель из-за одного вопроса, проходя через
     // настройки, слишком долго.
-    const model = bar.createEl("button", { cls: "ai-bar-model", text: this.host.settings.model });
+    // Не `settings.model`, а то, чем панель ответит: у приватного чата модель
+    // может быть своя, и шапка обязана называть именно её.
+    const model = bar.createEl("button", { cls: "ai-bar-model", text: this.host.chatConfig().model });
     model.setAttr("aria-label", t("chatPickModel"));
     model.onclick = (e) => this.openModelMenu(e);
 
@@ -272,7 +289,7 @@ export class ChatView extends ItemView {
   /** Панель могла быть открыта до правки настроек — освежаем подпись модели. */
   refreshHeader(): void {
     const model = this.contentEl.querySelector(".ai-bar-model");
-    if (model) model.textContent = this.host.settings.model;
+    if (model) model.textContent = this.host.chatConfig().model;
     this.paintReach();
     this.paintTotal();
   }
@@ -335,10 +352,16 @@ export class ChatView extends ItemView {
   /**
    * Меню моделей: сначала то, что уже настроено по провайдерам, — один клик и
    * готово. Полный список у провайдера просить незачем, пока он не понадобился.
+   *
+   * В приватном чате меню выбирает его собственную сетку, а не панельную: в
+   * шапке там написано, чем отвечает приватный разговор, и щелчок по надписи
+   * должен менять именно её. Выбор запоминается — это и есть та «сетка по
+   * умолчанию» из настроек, только выученная на ходу.
    */
   private openModelMenu(e: MouseEvent): void {
     const s = this.host.settings;
-    const current = providerOf(s);
+    const priv = s.privateChat;
+    const current = priv ? s.privateProvider || providerOf(s) : providerOf(s);
     const menu = new Menu();
 
     // Профили лежат в data.json в том порядке, в каком их когда-то завели, —
@@ -354,20 +377,27 @@ export class ChatView extends ItemView {
           .setChecked(name === current)
           .onClick(async () => {
             if (name === current) return;
-            switchProvider(s, name);
+            // Панельного провайдера приватный чат не трогает: вышел из него —
+            // и всё осталось там, где было.
+            if (priv) s.privateProvider = name;
+            else switchProvider(s, name);
             await this.host.saveSettings();
-            new Notice(t("chatModelSwitched", { model: s.model }));
+            new Notice(t("chatModelSwitched", { model: this.host.chatConfig().model }));
           }),
       );
     }
 
-    menu.addSeparator();
-    menu.addItem((item) =>
-      item
-        .setTitle(t("chatOtherModel"))
-        .setIcon("list")
-        .onClick(() => void this.pickModel()),
-    );
+    // Список у провайдера — про панельного: в приватном чате это меню
+    // раскладывает уже настроенное, а настраивают провайдеров в настройках.
+    if (!priv) {
+      menu.addSeparator();
+      menu.addItem((item) =>
+        item
+          .setTitle(t("chatOtherModel"))
+          .setIcon("list")
+          .onClick(() => void this.pickModel()),
+      );
+    }
     menu.showAtMouseEvent(e);
   }
 
@@ -377,7 +407,8 @@ export class ChatView extends ItemView {
    */
   private otherModels(): [string, ProviderProfile][] {
     const s = this.host.settings;
-    const current = providerOf(s);
+    // Тот, кто отвечает сейчас: в приватном чате это может быть не панельный.
+    const current = s.privateChat && s.privateProvider ? s.privateProvider : providerOf(s);
     return Object.entries(s.profiles)
       .filter(([name, p]) => p.model && name !== current)
       .sort(([a], [b]) => providerRank(a) - providerRank(b) || a.localeCompare(b));
@@ -401,7 +432,7 @@ export class ChatView extends ItemView {
     const menu = new Menu();
     menu.addItem((item) =>
       item
-        .setTitle(t("chatAgainSame", { model: this.host.settings.model }))
+        .setTitle(t("chatAgainSame", { model: this.host.chatConfig().model }))
         .setIcon("refresh-cw")
         .onClick(() => run()),
     );
@@ -421,7 +452,7 @@ export class ChatView extends ItemView {
   /** Список моделей текущего провайдера — тот же, что кнопкой в настройках. */
   private async pickModel(): Promise<void> {
     try {
-      const models = await listModels(this.host.apiConfig());
+      const models = await modelsFor(this.host.apiConfig());
       new ModelSuggestModal(this.host.app, models, (model) => {
         this.host.settings.model = model;
         void this.host.saveSettings();
@@ -590,6 +621,146 @@ export class ChatView extends ItemView {
       quote: ask.quote ?? null,
       config,
     });
+  }
+
+  /**
+   * Дописать оборванный ответ. Модель упёрлась в свой предел длины и встала на
+   * полуслове; до сих пор оставалось либо забирать половину руками, либо
+   * спрашивать заново — то есть платить за уже написанное второй раз.
+   *
+   * Продолжение приклеивается к тому же ответу, а не встаёт отдельной репликой:
+   * иначе длинный текст, ради которого всё и затевалось, пришлось бы копировать
+   * по кускам и сшивать вручную.
+   */
+  private async continueReply(msg: StoredChatMessage): Promise<void> {
+    if (this.busy) this.stop();
+    const history = this.host.history;
+    const at = history.indexOf(msg);
+    if (at === -1) return;
+    // Ниже мог появиться новый разговор: дописывать в середину ленты нельзя —
+    // продолжение окажется под чужими репликами.
+    if (this.lastChat() !== msg) {
+      new Notice(t("chatContinueLast"));
+      return;
+    }
+
+    // Тем же, чем отвечали: подпись под ответом уже стоит, и менять модель на
+    // середине текста — верный способ получить вторую половину другим голосом.
+    const cfg = this.configOf(msg.model);
+    // Вопрос выше ответа: по нему видно, шёл ли запрос из заметки — тогда
+    // прошлого разговора он не видел, и продолжению его тоже не надо.
+    let up = at - 1;
+    while (up >= 0 && !isAsk(history[up])) up--;
+    const ask = up >= 0 ? (history[up] as StoredChatMessage) : null;
+    const fresh = ask?.resend?.fresh === true;
+
+    const messages: ChatMessage[] = [];
+    const system = [
+      ask?.resend?.system?.trim(),
+      // Приватному чату своё не положено, как и в обычном запросе.
+      this.host.settings.privateChat ? "" : this.host.settings.systemPrompt.trim(),
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+    if (system) messages.push({ role: "system", content: system });
+
+    // Действие из заметки само себе контекст: в него уезжали только вопрос и
+    // ответ, и продолжение идёт по тем же правилам. Оборванный ответ уходит
+    // последней репликой — продолжать модель должна свой текст.
+    const talk = fresh && ask ? [ask, msg] : contextWindow(history);
+    for (const m of talk) messages.push({ role: m.role, content: messageText(m) });
+    messages.push({ role: "user", content: t("chatContinuePrompt") });
+
+    const controller = new AbortController();
+    this.controller = controller;
+    this.paintSendButton();
+
+    // Пишем в тот же пузырь. Его могло и не остаться — тогда просто перерисуем
+    // ленту, когда текст доедет.
+    const bubble = this.msgEls.get(msg) ?? null;
+    const body = bubble?.isConnected ? (bubble.querySelector(".ai-msg-body") as HTMLElement) : null;
+    const tail = this.listEl.createDiv({ cls: "ai-notice", text: t("chatContinuing") });
+    let added = "";
+
+    try {
+      const result = await chat(cfg, messages, {
+        stream: this.host.settings.stream && streamAllowed(providerOf(cfg)),
+        signal: controller.signal,
+        wantUsage: this.host.settings.showUsage,
+        onDelta: (chunk) => {
+          added += chunk;
+          // Дописываем прямо в конец готового ответа: markdown пересоберём,
+          // когда текст доедет целиком.
+          body?.appendText(chunk);
+          this.followBottom();
+        },
+      });
+      added = result.text || added;
+      if (!added.trim()) {
+        new Notice(t("emptyReply"));
+        // В пузырь могли натечь пробелы — возвращаем ленту к тому, что в истории.
+        this.repaint();
+        return;
+      }
+
+      // Склейка без пробела: модель продолжает с того самого символа, и лишний
+      // перенос строки разорвал бы слово или строку песни.
+      msg.content += added;
+      msg.truncated = result.truncated || undefined;
+      if (result.usage && msg.usage) {
+        msg.usage = {
+          prompt: msg.usage.prompt + result.usage.prompt,
+          completion: msg.usage.completion + result.usage.completion,
+          cached: msg.usage.cached + result.usage.cached,
+        };
+      } else if (result.usage) {
+        msg.usage = result.usage;
+      }
+      if (result.sources.length) msg.sources = result.sources;
+      this.host.persistHistory();
+
+      if (bubble && body) {
+        await this.renderMarkdown(msg.content, body, msg.sources);
+        this.addFooter(bubble, msg.content, msg.usage ?? null, msg);
+      } else {
+        this.repaint();
+      }
+    } catch (e) {
+      const err = e instanceof ApiError ? e : new ApiError(String(e));
+      if (err.aborted || controller.signal.aborted) {
+        // Оборвали руками — то, что успело прийти, всё равно оплачено.
+        if (added.trim()) {
+          msg.content += added;
+          this.host.persistHistory();
+        }
+        new Notice(t("aborted"));
+        this.repaint();
+      } else {
+        new Notice(err.message, 8000);
+        // Дописанного нет, а в пузыре осталась печать по ходу дела.
+        this.repaint();
+      }
+    } finally {
+      tail.remove();
+      if (this.controller === controller) this.controller = null;
+      this.paintSendButton();
+      this.paintReach();
+      this.paintTotal();
+    }
+  }
+
+  /**
+   * Настройки запроса под названную модель. Ответ мог прийти от другой — её
+   * звали разово через «ещё раз», — и дописывать его надо ею же.
+   */
+  private configOf(model: string | undefined): ApiConfig {
+    const base = this.host.chatConfig();
+    if (!model || model === base.model) return base;
+    for (const name of Object.keys(this.host.settings.profiles)) {
+      const found = configFor(this.host.settings, name);
+      if (found?.model === model) return found;
+    }
+    return base;
   }
 
   /** Вопрос возвращается в поле ввода, а разговор — к тому месту, где он был. */
@@ -783,7 +954,7 @@ export class ChatView extends ItemView {
     // Чем спрашиваем. Обычно тем, что в настройках, но «ещё раз» умеет позвать
     // другую модель на один запрос — и подпись под ответом должна сойтись с ней,
     // а не с той, что осталась в шапке.
-    const cfg = opts.config ?? this.host.apiConfig();
+    const cfg = opts.config ?? this.host.chatConfig();
     // Прикреплённое выделение уходит с вопросом и тут же снимается: следующий
     // вопрос — уже про своё, если не выделить заново. Явный null в опциях
     // означает «без фрагмента» и плашку не смотрит вовсе. Приватный чат не
@@ -827,7 +998,11 @@ export class ChatView extends ItemView {
     // как в веб-чате провайдера. На действие из заметки не распространяется:
     // оно само про неё, и выключать там нечего.
     const priv = this.host.settings.privateChat && !opts.fromEditor;
-    const canUseTools = this.host.settings.tools && !opts.fromEditor && !priv;
+    // Инструментов может не быть и у самого провайдера: Perplexity ищет в вебе и
+    // отвечает, а function calling не умеет вовсе — запрос с ними отлетел бы
+    // четырёхсотой на каждый вопрос.
+    const canUseTools =
+      this.host.settings.tools && !opts.fromEditor && !priv && toolsAllowed(providerOf(cfg));
     const hint = canUseTools ? t("chatSystemHintTools") : t("chatSystemHint");
 
     // «Отправлять заметку как контекст» — это про разговор в панели. Действие
@@ -957,9 +1132,11 @@ export class ChatView extends ItemView {
             reasoning,
             usage: result.usage ?? undefined,
             model: cfg.model,
+            sources: result.sources.length ? result.sources : undefined,
+            truncated: result.truncated || undefined,
           };
           this.host.history.push(reply);
-          await this.renderMarkdown(answer, body);
+          await this.renderMarkdown(answer, body, reply.sources);
           this.addFooter(bubble, answer, result.usage, reply);
         } else if (result.toolCalls.length === 0) {
           body.setText(t("emptyReply"));
@@ -1016,16 +1193,23 @@ export class ChatView extends ItemView {
         body.setText(err.message);
         const retry = body.createEl("button", { cls: "ai-retry", text: t("chatRetry") });
         retry.onclick = () => {
-          // Ошибка могла случиться и на втором круге инструментов — тогда сверху
-          // лежит не вопрос, а ответ или след правки. Снимаем весь заход целиком
-          // и перерисовываем ленту, чтобы она сошлась с историей.
-          const tail = this.host.history.splice(startAt);
-          // Правка выделенного могла идти своим чередом — к этому запросу она
-          // отношения не имеет, и её запись остаётся в ленте.
-          this.host.history.push(...tail.filter(isActionEntry));
-          this.host.persistHistory();
-          this.repaint();
-          void this.submit(text, opts);
+          // Пока ошибка висела на экране, ленту могли и очистить, и увести в
+          // новый разговор. Тогда startAt показывает уже не на наш заход, и
+          // splice отрезал бы кусок чужого: повторяем только вопрос.
+          if (this.host.history[startAt] === ask) {
+            // Ошибка могла случиться и на втором круге инструментов — тогда сверху
+            // лежит не вопрос, а ответ или след правки. Снимаем весь заход целиком
+            // и перерисовываем ленту, чтобы она сошлась с историей.
+            const tail = this.host.history.splice(startAt);
+            // Правка выделенного могла идти своим чередом — к этому запросу она
+            // отношения не имеет, и её запись остаётся в ленте.
+            this.host.history.push(...tail.filter(isActionEntry));
+            this.host.persistHistory();
+            this.repaint();
+          }
+          // Фрагмент задаём явно: плашку сняли ещё в начале захода, и без этого
+          // повтор уходил без куска заметки — молча и за те же деньги.
+          void this.submit(text, { ...opts, quote: quote ?? null });
         };
       }
     } finally {
@@ -1227,7 +1411,7 @@ export class ChatView extends ItemView {
           const block = this.addReasoningBlock(el);
           (block.querySelector(".ai-think-body") as HTMLElement).setText(m.reasoning);
         }
-        void this.renderMarkdown(m.content, body);
+        void this.renderMarkdown(m.content, body, m.sources);
         this.addFooter(el, m.content, m.usage ?? null, m);
       } else {
         body.setText(m.content);
@@ -1269,6 +1453,15 @@ export class ChatView extends ItemView {
       // Ответ, который не удалось применить, всё равно показываем: за него уже
       // заплачено, и его можно забрать руками.
       if (entry.content) card.createDiv({ cls: "ai-log-text", text: entry.content });
+      // Оборвано на пределе длины — единственная беда, которую можно поправить
+      // не переспрашивая: половина уже написана, осталось дописать остаток.
+      if (entry.truncated) {
+        const more = card.createDiv({ cls: "ai-log-foot" }).createEl("button", {
+          cls: "ai-log-undo",
+          text: t("logContinue"),
+        });
+        more.onclick = () => void this.host.continueAction(entry.id);
+      }
       return;
     }
 
@@ -1325,7 +1518,8 @@ export class ChatView extends ItemView {
       case "stopped":
         return t("aborted");
       case "error":
-        return t("logFailed");
+        // Оборванный ответ — не поломка: он есть, просто не дописан.
+        return entry.truncated ? t("logCutOff") : t("logFailed");
       default:
         return t("logDone");
     }
@@ -1365,7 +1559,7 @@ export class ChatView extends ItemView {
   private askFooter(el: HTMLElement, msg: StoredChatMessage): void {
     const foot = el.createDiv({ cls: "ai-msg-foot ai-msg-foot-ask" });
 
-    const edit = foot.createEl("button", { cls: "ai-msg-btn clickable-icon" });
+    const edit = foot.createEl("button", { cls: "clickable-icon" });
     setIcon(edit, "pencil");
     edit.setAttr("aria-label", t("chatEditAsk"));
     edit.onclick = () => this.editAsk(msg);
@@ -1374,7 +1568,7 @@ export class ChatView extends ItemView {
   }
 
   private dropButton(foot: HTMLElement, msg: StoredChatMessage): void {
-    const drop = foot.createEl("button", { cls: "ai-msg-btn clickable-icon" });
+    const drop = foot.createEl("button", { cls: "clickable-icon" });
     setIcon(drop, "trash-2");
     drop.setAttr("aria-label", t("chatDrop"));
     drop.onclick = () => this.dropMessage(msg);
@@ -1397,9 +1591,17 @@ export class ChatView extends ItemView {
     msg?: StoredChatMessage,
   ): void {
     bubble.querySelector(".ai-msg-foot")?.remove();
+    // Подвал рисуется под каждым ответом — и живым, и восстановленным из ленты,
+    // — поэтому связь «реплика → пузырь» запоминается здесь же: другого места,
+    // где сходятся оба, нет.
+    if (msg) this.msgEls.set(msg, bubble);
+    // Источники встают между ответом и кнопками, поэтому рисуются здесь же:
+    // подвал переписывается и по ходу разговора, и при перерисовке ленты.
+    bubble.querySelector(".ai-sources")?.remove();
+    if (msg?.sources?.length) this.addSources(bubble, msg.sources);
     const foot = bubble.createDiv({ cls: "ai-msg-foot" });
 
-    const copy = foot.createEl("button", { cls: "ai-msg-btn clickable-icon" });
+    const copy = foot.createEl("button", { cls: "clickable-icon" });
     setIcon(copy, "copy");
     copy.setAttr("aria-label", t("chatCopy"));
     copy.onclick = async () => {
@@ -1418,7 +1620,14 @@ export class ChatView extends ItemView {
 
     // Оборванный ответ в ленту не попадает — переспрашивать и убирать нечего.
     if (msg) {
-      const again = foot.createEl("button", { cls: "ai-msg-btn ai-msg-again clickable-icon" });
+      // Модель упёрлась в предел длины. Раньше оставалось дописывать руками или
+      // просить заново — целиком, вместе с уже оплаченной половиной.
+      if (msg.truncated) {
+        const more = foot.createEl("button", { cls: "ai-msg-more", text: t("chatContinue") });
+        more.onclick = () => void this.continueReply(msg);
+      }
+
+      const again = foot.createEl("button", { cls: "ai-msg-again clickable-icon" });
       setIcon(again, "refresh-cw");
       again.setAttr("aria-label", t("chatAgain"));
       again.onclick = (e) => this.againMenu(e, (config) => void this.regenerate(msg, config));
@@ -1438,10 +1647,39 @@ export class ChatView extends ItemView {
     }
   }
 
-  private async renderMarkdown(md: string, el: HTMLElement): Promise<void> {
+  /**
+   * Ссылки, на которых построен ответ. Свёрнутым списком: их бывает десяток, а
+   * разворачивают их, только когда ответу не поверили. Без них поисковый ответ
+   * ничем не отличается от выдуманного — проверить нечего.
+   */
+  private addSources(bubble: HTMLElement, sources: Source[]): void {
+    const details = bubble.createEl("details", { cls: "ai-sources" });
+    details.createEl("summary", { text: t("chatSources", { n: sources.length }) });
+    const list = details.createEl("ol", { cls: "ai-sources-list" });
+    for (const source of sources) {
+      // Нумерация сквозная, своя: в тексте ответа ссылок на неё уже нет, а
+      // выброшенный повтор оставил бы в списке дырку.
+      const item = list.createEl("li");
+      const link = item.createEl("a", {
+        cls: "ai-source-link",
+        // Название бывает не у всех провайдеров — тогда показываем сам адрес.
+        text: source.title || source.url,
+        href: source.url,
+      });
+      link.setAttr("target", "_blank");
+      // Ссылка ведёт наружу, в чужой веб: без rel открытая страница получает
+      // доступ к окну, из которого её открыли.
+      link.setAttr("rel", "noopener noreferrer");
+      if (source.date) item.createSpan({ cls: "ai-source-date", text: source.date });
+    }
+  }
+
+  private async renderMarkdown(md: string, el: HTMLElement, sources?: Source[]): Promise<void> {
     el.empty();
     const path = this.host.app.workspace.getActiveFile()?.path ?? "";
-    await MarkdownRenderer.render(this.host.app, md, el, path, this);
+    // Хвосты вида [1][6][8] из текста убираем: после каждой фразы они мешают
+    // читать, а сказать ничего не могут — источники и так лежат списком ниже.
+    await MarkdownRenderer.render(this.host.app, stripCitations(md, sources), el, path, this);
   }
 
   /** Тянуться за текстом, только если пользователь и так внизу списка. */

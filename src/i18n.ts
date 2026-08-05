@@ -67,8 +67,8 @@ const en = {
     "note — and the arrow keys change it for that one run.\n\n" +
     "There are five keys to begin with, and up to nine if you add them. Drag a row by its " +
     "handle to move an action to another key. The pencil opens the action itself: name, icon, " +
-    "prompt and what to do with the answer. An action taken off a key is not lost: it keeps " +
-    "its own command, and a command can be given a hotkey.",
+    "prompt, what to do with the answer and which model runs it. An action taken off a key is " +
+    "not lost: it keeps its own command, and a command can be given a hotkey.",
   quickSlot: "Key {key}",
   quickAddKey: "Add a key",
   quickDropKey: "Remove key {key}",
@@ -104,6 +104,14 @@ const en = {
     "When asked to write something into the note, simply output the finished text — there is " +
     "an “Insert into note” button under your answer, and the user will press it. " +
     "Never explain that you have no access to the vault and never ask the user to copy by hand.",
+  chatSources: "Sources ({n})",
+  chatContinue: "Continue",
+  chatContinuing: "Finishing the answer…",
+  chatContinueLast: "Only the last answer can be continued",
+  chatContinuePrompt:
+    "Your previous message was cut off mid-word because you ran out of room. Carry straight on " +
+    "from the exact character where it stopped. Do not repeat a single word of what you already " +
+    "wrote, do not start over, do not apologise and do not explain — just continue the text.",
   chatUsage: "{prompt} in / {completion} out",
   chatCached: ", {cached} cached",
   chatTotal: "This conversation: {prompt} in / {completion} out",
@@ -181,6 +189,9 @@ const en = {
   logRepeat: "Run it again",
   logRepeatOpen: "Open the note to run the edit again",
   logUndone: "undone",
+  logContinue: "Finish it",
+  logCutOff: "cut off",
+  logContinueGone: "The beginning of the answer is lost — the plugin only remembers it until it restarts",
   logUndoFail: "The text has changed since — undoing it now would break things",
   logMore: "and more: {added} added, {removed} removed",
   actNewName: "New action",
@@ -194,6 +205,14 @@ const en = {
   actModeReplace: "Replace the text",
   actModeAppend: "Add below",
   actModeChat: "Show in the panel",
+  actProvider: "Which model runs it",
+  actProviderDesc:
+    "Proofreading is done just as well by the cheapest model, and judging a text without a strong " +
+    "one is pointless. Pick a provider and the action always goes to it, whatever stands in the " +
+    "panel header. Only providers you have already set up are listed.",
+  actProviderPanel: "The one in the panel",
+  actProviderGone:
+    "“{action}” runs on {provider}, but no model is set for it — pick one in the settings",
   actIcon: "Icon",
   actIconDesc: "A name from lucide.dev, e.g. sparkles",
   actBuiltinNote: "A built-in action: it cannot be deleted, but the prompt is yours to change",
@@ -224,6 +243,12 @@ const en = {
   setFresh: "Start with an empty chat",
   setFreshDesc:
     "When Obsidian starts, the panel opens empty and yesterday's conversation is dropped. Save what you need to a note first.",
+  setPrivateModel: "The model for a private chat",
+  setPrivateModelDesc:
+    "A private chat is started to ask something that is not about the vault at all, and the " +
+    "model wanted there is usually a different one — cheaper, or simply not the one you keep " +
+    "your work with. Pick a provider and every private chat goes to it; the header still shows " +
+    "who is answering, and picking a model there while private changes this same setting.",
   setNewNote: "Where new notes go",
   setNewNoteDesc:
     "Both the saved conversation and whatever the model creates on its own end up here.",
@@ -240,7 +265,8 @@ const en = {
   tooBigGo: "Send",
   cutOff:
     "The model ran out of room and cut the answer off mid-sentence. It is not going into the note — " +
-    "it would replace your text with half of it. The answer is below: take what you need by hand.",
+    "it would replace your text with half of it. Press “Finish it” to have the rest written, or " +
+    "take what you need from the card by hand.",
   chatCutOff: "The model hit its length limit and cut the answer off.",
   stale: "The text changed while the model was working, so nothing was replaced. The answer is below — copy it by hand if you still need it.",
   emptyReply: "The model returned an empty answer",
@@ -257,8 +283,17 @@ const en = {
   setProviderPolza: "Polza.ai",
   setProviderChad: "ChadGPT",
   setProviderTunnel: "GPTunnel",
+  setProviderPerplexity: "Perplexity",
   setProviderOllama: "Ollama (on this computer)",
   setProviderCustom: "Another OpenAI-compatible one",
+  setModelPerplexity:
+    "sonar is cheap and quick, sonar-pro digs deeper, sonar-reasoning-pro thinks it through, " +
+    "sonar-deep-research writes a long report and costs accordingly. Every answer comes with the " +
+    "links it was built on.",
+  setModelBuiltin: "Perplexity does not publish a list — these are the models it has.",
+  setToolsNoProvider:
+    "{provider} has no tools of its own: it searches the web and answers, and cannot edit the " +
+    "note. The setting stays on for the other providers.",
   setModelFetchHint: "Press “Fetch the list” — the names come from the provider.",
   setModelOllama:
     "Press “Fetch the list” — it shows the models you have pulled. Ollama has to be running; " +
@@ -429,8 +464,8 @@ const ru: typeof en = {
     "и стрелки вбок меняют это на один раз.\n\n" +
     "Клавиш сразу пять, а если мало — добавь ещё, до девяти. Строку можно перетащить за ручку: " +
     "так действие переезжает на другую клавишу. Карандаш открывает само действие: название, " +
-    "иконка, промпт и что делать с ответом. Снятое с клавиши действие не пропадает: у него " +
-    "остаётся своя команда, а команде можно назначить горячую клавишу.",
+    "иконка, промпт, что делать с ответом и чем его прогонять. Снятое с клавиши действие не " +
+    "пропадает: у него остаётся своя команда, а команде можно назначить горячую клавишу.",
   quickSlot: "Клавиша {key}",
   quickAddKey: "Добавить клавишу",
   quickDropKey: "Убрать клавишу {key}",
@@ -466,6 +501,14 @@ const ru: typeof en = {
     "Если просят что-то написать в заметку — просто выведи готовый текст: под твоим ответом " +
     "есть кнопка «Вставить в заметку», её нажмёт пользователь. " +
     "Никогда не объясняй, что у тебя нет доступа к хранилищу, и не проси копировать вручную.",
+  chatSources: "Источники ({n})",
+  chatContinue: "Продолжить",
+  chatContinuing: "Дописывает ответ…",
+  chatContinueLast: "Продолжается только последний ответ",
+  chatContinuePrompt:
+    "Твоё прошлое сообщение оборвалось на полуслове: кончилось место. Продолжай ровно с того " +
+    "символа, на котором оно остановилось. Не повторяй ни слова из уже написанного, не начинай " +
+    "заново, не извиняйся и не объясняй — просто продолжай текст.",
   chatUsage: "{prompt} на вход / {completion} на выход",
   chatCached: ", из них {cached} из кэша",
   chatTotal: "За разговор: {prompt} на вход / {completion} на выход",
@@ -542,6 +585,9 @@ const ru: typeof en = {
   logRepeat: "Ещё раз",
   logRepeatOpen: "Открой заметку, чтобы переделать правку",
   logUndone: "отменено",
+  logContinue: "Дописать",
+  logCutOff: "оборвано",
+  logContinueGone: "Начало ответа потеряно — плагин помнит его только до перезапуска",
   logUndoFail: "Текст с тех пор изменился — возвращать вслепую нельзя",
   logMore: "и ещё: добавлено {added}, убрано {removed}",
   actNewName: "Новое действие",
@@ -555,6 +601,13 @@ const ru: typeof en = {
   actModeReplace: "Заменить текст",
   actModeAppend: "Дописать снизу",
   actModeChat: "Показать в панели",
+  actProvider: "Чем прогонять",
+  actProviderDesc:
+    "Орфографию не хуже правит самая дешёвая модель, а оценивать текст без сильной бессмысленно. " +
+    "Выберешь провайдера — действие всегда уходит к нему, что бы ни стояло в шапке панели. " +
+    "В списке только те, кто уже настроен.",
+  actProviderPanel: "Как в панели",
+  actProviderGone: "«{action}» настроено на {provider}, но модель там не выбрана — укажи её в настройках",
   actIcon: "Иконка",
   actIconDesc: "Название с lucide.dev, например sparkles",
   actBuiltinNote: "Встроенное действие: удалить нельзя, но промпт можно переписать под себя",
@@ -585,6 +638,12 @@ const ru: typeof en = {
   setFresh: "Начинать с пустого чата",
   setFreshDesc:
     "При запуске Obsidian панель открывается пустой, вчерашний разговор не подхватывается. Что нужно — сохрани в заметку заранее.",
+  setPrivateModel: "Сетка приватного чата",
+  setPrivateModelDesc:
+    "Приватный чат заводят, чтобы спросить не про хранилище, и модель там обычно нужна другая — " +
+    "подешевле или просто не та, с которой работаешь. Выбери провайдера, и всякий приватный " +
+    "разговор пойдёт к нему; в шапке при этом видно, кто отвечает, а выбор модели там же, " +
+    "внутри приватного чата, меняет эту же настройку.",
   setNewNote: "Куда класть новые заметки",
   setNewNoteDesc: "И сохранённый разговор, и то, что модель создаёт сама.",
   setNewNoteRoot: "В корень хранилища",
@@ -598,7 +657,8 @@ const ru: typeof en = {
   tooBigGo: "Отправить",
   cutOff:
     "Модель упёрлась в свой предел длины и оборвала ответ на полуслове. В заметку он не пойдёт — " +
-    "заменил бы твой текст его половиной. Ответ ниже: забери руками, что нужно.",
+    "заменил бы твой текст его половиной. Нажми «Дописать», чтобы получить остаток, или забери " +
+    "с карточки руками, что нужно.",
   chatCutOff: "Модель упёрлась в предел длины и оборвала ответ.",
   stale: "Пока модель работала, текст изменился, и замены не было. Ответ ниже — если он ещё нужен, перенеси руками.",
   emptyReply: "Модель вернула пустой ответ",
@@ -615,8 +675,17 @@ const ru: typeof en = {
   setProviderPolza: "Polza.ai",
   setProviderChad: "ChadGPT",
   setProviderTunnel: "GPTunnel",
+  setProviderPerplexity: "Perplexity",
   setProviderOllama: "Ollama (на этом компьютере)",
   setProviderCustom: "Другой OpenAI-совместимый",
+  setModelPerplexity:
+    "sonar дешёвая и быстрая, sonar-pro копает глубже, sonar-reasoning-pro рассуждает, " +
+    "sonar-deep-research пишет длинный отчёт и стоит соответственно. К каждому ответу " +
+    "прилагаются ссылки, на которых он построен.",
+  setModelBuiltin: "Perplexity списка не публикует — это те модели, что у неё есть.",
+  setToolsNoProvider:
+    "У {provider} инструментов нет: она ищет в вебе и отвечает, а править заметку не умеет. " +
+    "Для остальных провайдеров настройка остаётся включённой.",
   setModelFetchHint: "Нажми «Получить список» — имена придут от провайдера.",
   setModelOllama:
     "Нажми «Получить список» — покажет то, что скачано. Ollama должна быть запущена, ключ не " +

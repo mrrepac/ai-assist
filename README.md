@@ -41,11 +41,25 @@ sidebar, but the main road is selection → key → done.
 - **Ask about a fragment.** Select a piece of a note and go to the chat: it comes along as
   an attachment, so the question can be just "and shorter?" — and the fragment stays with
   the conversation for the questions that follow.
+- **An action can have its own model.** Proofreading is done just as well by the cheapest
+  one, and judging a text without a strong one is pointless — pick a provider inside the
+  action and it always goes there, whatever stands in the panel header.
+- **A cut-off answer can be finished.** The model ran out of room and stopped mid-word —
+  "Finish it" asks for the rest and joins it to what you already have. Works both in the
+  chat and for an edit over the selection: the half you paid for is not thrown away.
 - **A journal of edits** in the side panel: what ran, what came back, what exactly changed
   (word-level diff, "was → became"), an "Undo the edit" button and a "Run it again" one —
   it brings the text back and runs the same action over it once more.
 - **Chat in the right sidebar** with streaming, thinking blocks, the running cost in
   tokens, and a button that saves the conversation into a note.
+- **Sources under the answer.** A search model answers from pages on the web rather than
+  from memory — the list of them sits under the answer, collapsed, and opens on a click.
+  It is stored with the answer, so it survives a restart, and goes into the note if you
+  save the conversation. The `[1][6][8]` tails such a model puts after every sentence are
+  stripped from the text — they get in the way of reading, and the list is right there.
+- **A private chat can have its own model.** It is started to ask something that is not
+  about the vault, and the model wanted there is usually a different one — pick it in the
+  settings and the panel's own stays where it is.
 - **The conversation can be rewritten.** Under an answer — "ask again"; under your own
   question — a pencil that puts the text back into the field, so the question can leave as
   a different one. The bin removes what is not needed, and whatever was removed comes back
@@ -65,6 +79,10 @@ without a VPN:
 - **DeepSeek** — the Chinese model directly: cheap, no middleman;
 - **Polza.ai**, **ChadGPT**, **GPTunnel** — Russian aggregators: one key, and behind it
   GPT, Claude, Gemini and dozens of other models, paid for with a Russian card;
+- **Perplexity** — less a model than a search engine with a model on top: it reads the web
+  first, then answers and attaches the links. You reach for it for facts and fresh news —
+  the things an ordinary model does not know and happily invents. It has no note-editing
+  tools, and the plugin does not send it any;
 - **Ollama** — a model on your own computer, free and offline.
 
 Plus any other base URL you type in. The API key, the model and the address are remembered
@@ -90,15 +108,15 @@ Everything lives in three sections:
 - **Provider** — service, address, key, model, connection test.
 - **Behaviour** — temperature, response length limit, streaming,
   what to do when nothing is selected (the whole note / the section / the paragraph /
-  nothing), the length past which it asks before sending, token usage display, where new
-  notes go (the vault root / a folder of your own / next to the note being worked on),
-  note editing tools, the system prompt for the chat.
+  nothing), the length past which it asks before sending, token usage display, the model
+  for a private chat, where new notes go (the vault root / a folder of your own / next to
+  the note being worked on), note editing tools, the system prompt for the chat.
 - **Quick menu** — the keys: five by default, more if you add them, and a row can be
   dragged by its handle; plus what the plugin puts into the editor's context menu. Each
   key is an action, and this is where an action is
-  edited: name, icon, prompt, and what to do with the answer. Your own action is created
-  in a slot too. An action taken off a slot is not lost — it keeps its own command, and a
-  command can be given a hotkey.
+  edited: name, icon, prompt, what to do with the answer and which model runs it. Your own
+  action is created in a slot too. An action taken off a slot is not lost — it keeps its
+  own command, and a command can be given a hotkey.
 
 ## Commands
 

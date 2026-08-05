@@ -37,11 +37,12 @@ async function load(entry, name) {
   return import("file:///" + outfile.replace(/\\/g, "/"));
 }
 
-const { drainSse, endpoint, collectToolCalls, isLocalUrl } = await load("src/api.ts", "api");
+const { drainSse, endpoint, collectToolCalls, isLocalUrl, readSources } = await load("src/api.ts", "api");
 const { cleanReply, offsetAt, sectionAt, sectionName } = await load("src/actions.ts", "actions");
 const { contextWindow, messageText } = await load("src/history.ts", "history");
-const { mergeSettings, providerOf, streamAvailable, streamAllowed, configFor, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank } = await load("src/types.ts", "types");
+const { mergeSettings, providerOf, streamAvailable, streamAllowed, configFor, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank, toolsAllowed, builtinModels, activeConfig } = await load("src/types.ts", "types");
 const { chatToMarkdown } = await load("src/chatnote.ts", "chatnote");
+const { stripCitations } = await load("src/cite.ts", "cite");
 const { parseCall, runCall } = await load("src/tools.ts", "tools");
 const { diffWords } = await load("src/diff.ts", "diff");
 
@@ -798,12 +799,148 @@ check("мусор в режиме меню чинится", mergeSettings({ edit
 
 // ——— порядок провайдеров ———
 // Один список на выпадающее меню в настройках и на меню в шапке панели.
-check("порядок провайдеров", PROVIDER_ORDER, ["deepseek", "chadgpt", "gptunnel", "polza", "ollama"]);
+check("порядок провайдеров", PROVIDER_ORDER, ["deepseek", "chadgpt", "gptunnel", "polza", "perplexity", "ollama"]);
 check("ollama узнаётся по адресу", providerOf({ baseUrl: "http://localhost:11434/v1" }), "ollama");
 // Пресет LM Studio убран, но его адрес у кого-то остался в настройках: он
 // должен работать дальше как «свой адрес», а не превратиться в поломку.
 check("адрес убранного пресета становится своим", providerOf({ baseUrl: "http://localhost:1234/v1" }), "custom");
 check("и остаётся локальным, то есть без ключа", isLocalUrl("http://localhost:1234/v1"), true);
+
+// ——— Perplexity ———
+// Поисковик с моделью поверх: OpenAI-совместим по адресу и методу, но списка
+// моделей не отдаёт, инструментов не умеет и кладёт в ответ ссылки.
+check("perplexity узнаётся по адресу", providerOf({ baseUrl: "https://api.perplexity.ai" }), "perplexity");
+check("адрес perplexity достраивается", endpoint("https://api.perplexity.ai", "/chat/completions"), "https://api.perplexity.ai/chat/completions");
+check("поток у perplexity доступен", streamAvailable({ baseUrl: "https://api.perplexity.ai" }), true);
+// Инструменты ей слать нельзя: function calling она не умеет, и запрос с ними
+// отлетал бы четырёхсотой на каждый вопрос.
+check("инструментов у perplexity нет", toolsAllowed("perplexity"), false);
+check("у остальных инструменты на месте", toolsAllowed("deepseek"), true);
+check("у своего адреса инструменты не запрещаем", toolsAllowed("custom"), true);
+// GET /models у неё отсутствует — кнопка «Получить список» упёрлась бы в 404
+// с подписью «по этому адресу такой модели нет», то есть соврала бы дважды.
+check("список моделей встроенный", builtinModels("perplexity").includes("sonar-pro"), true);
+check("у остальных списка нет — спрашиваем провайдера", builtinModels("deepseek"), null);
+// Первая модель из встроенного списка подставляется сама: иначе после выбора
+// провайдера поле модели пустое, а угадать имя нельзя.
+check("модель подставляется при переключении", (() => { const s = defaultSettings(); switchProvider(s, "perplexity"); return s.model; })(), "sonar");
+check("адрес тоже из пресета", (() => { const s = defaultSettings(); switchProvider(s, "perplexity"); return s.baseUrl; })(), "https://api.perplexity.ai");
+
+// ——— ссылки под ответом ———
+// Ради них поисковую модель и берут: без источников её ответ ничем не отличается
+// от выдуманного, проверить нечего.
+check(
+  "search_results разбираются",
+  readSources({ search_results: [{ title: "Устав", url: "https://a.ru/x", date: "2026-01-02" }] }),
+  [{ url: "https://a.ru/x", title: "Устав", date: "2026-01-02", n: 1 }],
+);
+// Модель ссылается прямо в тексте — «родился в Москве[1][6]», — и цифра там
+// означает место в ЕЁ списке. Выброшенный повтор или нерабочий адрес не должен
+// сдвигать номера у всего хвоста, иначе ссылки покажут на чужие источники.
+check(
+  "номер держится за источником, а не за местом в списке",
+  readSources({ citations: ["https://a.ru/1", "javascript:alert(1)", "https://a.ru/3"] }).map((s) => s.n),
+  [1, 3],
+);
+check(
+  "повтор не сдвигает номера следующих",
+  readSources({ citations: ["https://a.ru/1", "https://a.ru/1", "https://a.ru/3"] }).map((s) => s.n),
+  [1, 3],
+);
+check(
+  "citations идут запасным вариантом",
+  readSources({ citations: ["https://b.ru/1", "https://b.ru/2"] }).map((s) => s.url),
+  ["https://b.ru/1", "https://b.ru/2"],
+);
+check("у голой ссылки названия нет", readSources({ citations: ["https://b.ru/1"] })[0].title, "");
+// Провайдер повторяет источник столько раз, сколько на него сослался, — в
+// списке под ответом он нужен один.
+check(
+  "повторы схлопываются",
+  readSources({ citations: ["https://b.ru/1", "https://b.ru/1", "https://b.ru/2"] }).length,
+  2,
+);
+check("search_results важнее citations", readSources({ search_results: [{ url: "https://a.ru/x" }], citations: ["https://b.ru/1"] })[0].url, "https://a.ru/x");
+check("обычная модель ссылок не шлёт", readSources({}), []);
+check("мусор вместо списка не роняет разбор", readSources({ citations: "ой" }), []);
+// Ссылка ведёт наружу и открывается по клику: javascript: и file: пускать туда
+// нельзя, а без адреса пункт списка бессмыслен.
+check("не-веб адреса отбрасываются", readSources({ citations: ["javascript:alert(1)", "file:///c:/x", ""] }), []);
+check("битый элемент не роняет разбор", readSources({ search_results: [null, { url: "https://a.ru" }] }).length, 1);
+
+// ——— номера источников вычищаются из текста ———
+// Поисковая модель ставит их после каждой фразы — читать мешает, а сказать они
+// ничего не могут: источники лежат списком под ответом. Рядом живут блоки кода
+// и [[вики-ссылки]], где скобка значит своё, — испортить чужую разметку тут
+// проще всего.
+const src = (...urls) => urls.map((url, i) => ({ url, title: "", n: i + 1 }));
+const two = src("https://a.ru/1", "https://b.ru/2");
+const three = src("https://a.ru/1", "https://b.ru/2", "https://c.ru/3");
+
+check("номер убирается", stripCitations("родился в Москве[1]", two), "родился в Москве");
+// Ровно то, что на скриншоте Льва: «...раннего русского хип-хопа.[1][6][8]».
+check("три маркера подряд", stripCitations("хип-хопа.[1][2][3]", three), "хип-хопа.");
+// Пробел перед номером уходит вместе с ним, иначе «текст [1]. Дальше»
+// превращается в «текст . Дальше».
+check("пробел перед номером не остаётся", stripCitations("текст [1]. Дальше", two), "текст. Дальше");
+check("пробел после номера уцелел", stripCitations("текст[1] дальше", two), "текст дальше");
+check("маркер в середине фразы", stripCitations("он[1] сказал[2] так", two), "он сказал так");
+// Модель ссылается и на то, чего нам не прислали; чужое число в скобках —
+// возможно, текст пользователя, и сносить его не за что.
+check("номера вне списка остаются", stripCitations("Москве[9]", two), "Москве[9]");
+check("без источников текст не меняется", stripCitations("Москве[1]", []), "Москве[1]");
+check("текста без скобок не касаемся", stripCitations("просто текст", two), "просто текст");
+
+// Чужая разметка: ни одну из этих штук трогать нельзя.
+check("готовая ссылка не разбирается", stripCitations("[1](https://уже.ru)", two), "[1](https://уже.ru)");
+check("вики-ссылка не трогается", stripCitations("см. [[1]]", two), "см. [[1]]");
+check("вики-ссылка с подписью не трогается", stripCitations("[[файл|1]]", two), "[[файл|1]]");
+check("номер в блоке кода не трогается", stripCitations("```js\nlet a = x[1];\n```", two), "```js\nlet a = x[1];\n```");
+check("номер в тильдовой ограде не трогается", stripCitations("~~~\nx[1]\n~~~", two), "~~~\nx[1]\n~~~");
+check("номер в строчном коде не трогается", stripCitations("вот `x[1]` вот", two), "вот `x[1]` вот");
+// Код кончился — за ним чистка снова работает.
+check("после блока кода чистка продолжается", stripCitations("`x[1]` и Москве[2]", two), "`x[1]` и Москве");
+check("после вики-ссылки чистка продолжается", stripCitations("см. [[заметку]] и Москве[1]", two), "см. [[заметку]] и Москве");
+// Чекбокс — не номер, цифр в нём нет; но проверить стоит, разметка живая.
+check("чекбокс не ломается", stripCitations("- [ ] дело[1]", two), "- [ ] дело");
+
+// ——— источники в сохранённой заметке ———
+// Разговор уходит в заметку целиком, и ответ без источников в ней — набор
+// утверждений, которые больше нечем проверить.
+const cited = chatToMarkdown(
+  [{ role: "assistant", content: "Родился в Москве[1]", sources: [{ url: "https://a.ru/1", title: "Био", n: 1 }] }],
+  "м",
+  "д",
+);
+check("номер вычищен и в сохранённой заметке", cited.includes("Москве[1]"), false);
+check("список источников дописан", cited.includes("1. [Био](https://a.ru/1)"), true);
+check("обычный ответ списком не обрастает", chatToMarkdown([{ role: "assistant", content: "просто" }], "м", "д").includes("1. ["), false);
+
+// ——— своя модель у действия ———
+// Орфографию не хуже правит дешёвая модель, оценивать текст без сильной
+// бессмысленно, а факты надо искать там, где есть веб.
+// Пусто и отсутствующее поле — одно и то же: прогоняем тем, что в шапке.
+check("по умолчанию действие идёт тем, что в шапке", !mergeSettings(null).actions[0].provider, true);
+check(
+  "выбранный провайдер переживает загрузку",
+  mergeSettings({ actions: [{ id: "custom-3", name: "Факты", prompt: "п", mode: "chat", icon: "x", provider: "perplexity" }] })
+    .actions.at(-1).provider,
+  "perplexity",
+);
+check(
+  "мусор вместо провайдера — как в шапке",
+  mergeSettings({ actions: [{ id: "custom-3", name: "Х", prompt: "п", mode: "chat", icon: "x", provider: 42 }] })
+    .actions.at(-1).provider,
+  "",
+);
+// Встроенному действию провайдер назначается так же, как своему, и обновление
+// плагина его не сбрасывает.
+check(
+  "провайдер встроенного действия сохраняется",
+  mergeSettings({ actions: [{ id: "spelling", name: "Исправить орфографию", prompt: "п", mode: "replace", icon: "x", provider: "polza" }] })
+    .actions.find((a) => a.id === "spelling").provider,
+  "polza",
+);
 
 // ——— локальный сервер ———
 // Ключа у него нет и спрашивать не у кого: решаем по адресу, а не по пресету,
@@ -878,6 +1015,33 @@ check(
 check("поток чужого провайдера считается по нему же", streamAllowed(providerOf(configFor(twoProfiles, "polza"))), true);
 check("у ChadGPT поток закрыт и разовому прогону", streamAllowed("chadgpt"), false);
 check("активные настройки считаются так же", streamAvailable({ baseUrl: "https://ask.chadgpt.ru/api/v1" }), false);
+
+// ——— сетка приватного чата ———
+// Приватный разговор заводят, чтобы спросить не про хранилище, и модель там
+// обычно нужна другая. Панельную он при этом не трогает: вышел — и всё осталось
+// там, где было.
+const withPriv = (privateChat, privateProvider) => {
+  const s = defaultSettings();
+  s.model = "deepseek-v4-flash";
+  s.profiles.polza = { apiKey: "sk-polza", model: "openai/gpt-4o", baseUrl: "https://api.polza.ai/api/v1" };
+  s.profiles.empty = { apiKey: "sk-x", model: "", baseUrl: "https://x.ai/v1" };
+  return { ...s, privateChat, privateProvider };
+};
+check("обычный чат идёт панельной моделью", activeConfig(withPriv(false, "")).model, "deepseek-v4-flash");
+check("своя сетка приватного чата подхватывается", activeConfig(withPriv(true, "polza")).model, "openai/gpt-4o");
+check("и ключ берётся её же", activeConfig(withPriv(true, "polza")).apiKey, "sk-polza");
+// Настройка есть, но чат обычный — она молчит: это сетка приватного, а не вторая панельная.
+check("вне приватного чата настройка не действует", activeConfig(withPriv(false, "polza")).model, "deepseek-v4-flash");
+check("приватный чат без своей сетки идёт панельной", activeConfig(withPriv(true, "")).model, "deepseek-v4-flash");
+// Провайдера могли лишить модели уже после выбора. Приватность держится на том,
+// что из хранилища ничего не уходит, — от модели она не зависит, поэтому просто
+// отвечаем обычной, а не отказываемся разговаривать.
+check("сетка без модели — отвечает панельная", activeConfig(withPriv(true, "empty")).model, "deepseek-v4-flash");
+check("незнакомая сетка — отвечает панельная", activeConfig(withPriv(true, "нет-такой")).model, "deepseek-v4-flash");
+
+check("по умолчанию сетки приватного чата нет", mergeSettings(null).privateProvider, "");
+check("выбранная сетка переживает загрузку", mergeSettings({ privateProvider: "polza" }).privateProvider, "polza");
+check("мусор вместо сетки — как в панели", mergeSettings({ privateProvider: 42 }).privateProvider, "");
 
 // ——— чистая лента при запуске ———
 check("по умолчанию чат открывается пустым", mergeSettings(null).freshStart, true);

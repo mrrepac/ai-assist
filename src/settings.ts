@@ -1,6 +1,6 @@
 import { App, Notice, Platform, PluginSettingTab, Setting, debounce, setIcon } from "obsidian";
 import { newAction } from "./actions";
-import { ApiError, chat, isLocalUrl, listModels } from "./api";
+import { ApiError, chat, isLocalUrl } from "./api";
 import { I18nKey, t } from "./i18n";
 import { ActionModal, ConfirmModal, ModelSuggestModal } from "./modals";
 import type AiAssistPlugin from "./main";
@@ -13,10 +13,14 @@ import {
   PROVIDER_ORDER,
   QUICK_ASK,
   QUICK_SLOTS_MAX,
+  builtinModels,
+  modelsFor,
   providerLabel,
   providerOf,
+  providerRank,
   streamAvailable,
   switchProvider,
+  toolsAllowed,
 } from "./types";
 
 /**
@@ -31,6 +35,7 @@ const MODEL_HINT: Record<string, I18nKey> = {
   chadgpt: "setModelChad",
   gptunnel: "setModelFetchHint",
   polza: "setModelPolza",
+  perplexity: "setModelPerplexity",
   ollama: "setModelOllama",
 };
 
@@ -47,7 +52,6 @@ export class AiAssistSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.addClass("ai-assist-settings");
 
     this.modelSection();
     this.behaviourSection();
@@ -67,7 +71,7 @@ export class AiAssistSettingTab extends PluginSettingTab {
     s.quickSlots[slot] = created.id;
     await this.saveSlots();
     // Пустое действие бесполезно, поэтому сразу открываем его на правку.
-    new ActionModal(this.app, created, (edited) => {
+    new ActionModal(this.app, created, s, (edited) => {
       const at = s.actions.findIndex((a) => a.id === created.id);
       if (at !== -1) s.actions[at] = edited;
       void this.saveSlots();
@@ -88,7 +92,7 @@ export class AiAssistSettingTab extends PluginSettingTab {
 
     // Список живёт в своём контейнере: перекладывая клавиши, экран целиком не
     // перерисовываем — иначе настройки отпрыгивают к началу на каждое движение.
-    this.slotsEl = containerEl.createDiv({ cls: "ai-slots" });
+    this.slotsEl = containerEl.createDiv();
     this.renderSlots();
 
     // Меню и клавиша — про одно и то же: как добраться до действий, не заходя
@@ -193,7 +197,7 @@ export class AiAssistSettingTab extends PluginSettingTab {
               void this.addAction(i);
               return;
             }
-            new ActionModal(this.app, action, (edited) => {
+            new ActionModal(this.app, action, s, (edited) => {
               const at = s.actions.findIndex((a) => a.id === action.id);
               if (at !== -1) s.actions[at] = edited;
               void this.saveSlots();
@@ -226,7 +230,7 @@ export class AiAssistSettingTab extends PluginSettingTab {
     });
 
     // Пять клавиш хватает почти всегда, поэтому лишние заводятся руками.
-    const foot = new Setting(list).setClass("ai-slots-foot");
+    const foot = new Setting(list);
     if (s.quickSlots.length < QUICK_SLOTS_MAX) {
       foot.addButton((b) =>
         b.setButtonText(t("quickAddKey")).onClick(() => {
@@ -399,8 +403,13 @@ export class AiAssistSettingTab extends PluginSettingTab {
         b.setButtonText(t("setModelFetch")).onClick(async () => {
           b.setDisabled(true);
           try {
-            const models = await listModels(this.plugin.apiConfig());
-            new Notice(t("setModelFetched", { n: models.length }));
+            const models = await modelsFor(this.plugin.apiConfig());
+            // У провайдера со встроенным списком спрашивать было нечего —
+            // «моделей найдено» тут прозвучало бы как отчёт о запросе, которого
+            // не было.
+            new Notice(
+              builtinModels(provider) ? t("setModelBuiltin") : t("setModelFetched", { n: models.length }),
+            );
             new ModelSuggestModal(this.app, models, (model) => {
               s.model = model;
               void this.saveAndRedraw();
@@ -540,6 +549,35 @@ export class AiAssistSettingTab extends PluginSettingTab {
         }),
       );
 
+    // Выбирать не из чего, пока настроен один провайдер, — строка стояла бы
+    // с единственным пунктом и только спрашивала бы, зачем она.
+    const ready = Object.entries(s.profiles)
+      .filter(([, profile]) => profile.model)
+      .sort(([a], [b]) => providerRank(a) - providerRank(b) || a.localeCompare(b));
+    if (ready.length > 1) {
+      const options: Record<string, string> = { "": t("actProviderPanel") };
+      for (const [name, profile] of ready) {
+        options[name] = `${providerLabel(name)} · ${profile.model}`;
+      }
+      // Выбранного провайдера могли с тех пор лишить модели — держим его в
+      // списке, иначе выпадающий список молча вернул бы «как в панели».
+      if (s.privateProvider && !options[s.privateProvider]) {
+        options[s.privateProvider] = providerLabel(s.privateProvider);
+      }
+      new Setting(containerEl)
+        .setName(t("setPrivateModel"))
+        .setDesc(t("setPrivateModelDesc"))
+        .addDropdown((c) =>
+          c
+            .addOptions(options)
+            .setValue(s.privateProvider)
+            .onChange(async (v) => {
+              s.privateProvider = v;
+              await this.save();
+            }),
+        );
+    }
+
     // Заметки создаёт и кнопка «сохранить чат», и сама модель — правило на них
     // общее, поэтому стоит до раздела про инструменты, а не внутри него.
     new Setting(containerEl)
@@ -588,6 +626,16 @@ export class AiAssistSettingTab extends PluginSettingTab {
           this.display();
         }),
       );
+
+    // Провайдер может не уметь инструменты вовсе — тогда включённая настройка
+    // ни на что не влияет, и молчать об этом нельзя: выглядит как поломка.
+    const provider = providerOf(s);
+    if (s.tools && !toolsAllowed(provider)) {
+      containerEl.createEl("p", {
+        cls: "setting-item-description ai-setting-warn",
+        text: t("setToolsNoProvider", { provider: providerLabel(provider) }),
+      });
+    }
 
     if (s.tools) {
       new Setting(containerEl)

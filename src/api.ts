@@ -43,13 +43,69 @@ interface WireDelta {
   tool_calls?: WireToolCall[];
 }
 
+/**
+ * Откуда взят ответ. Поисковые модели (Perplexity и подобные) кладут ссылки
+ * рядом с текстом, каждый по-своему: search_results — с названиями и датами,
+ * citations — голым списком адресов. Читаем оба и сводим к одному виду.
+ */
+interface WireSearchResult {
+  title?: string;
+  url?: string;
+  date?: string;
+}
+
 export interface WireChunk {
   usage?: WireUsage;
+  citations?: unknown;
+  search_results?: unknown;
   /**
    * finish_reason приезжает в последнем чанке: "stop" — модель договорила,
    * "length" — упёрлась в свой предел и оборвала ответ на полуслове.
    */
   choices?: { delta?: WireDelta; message?: WireDelta; finish_reason?: string | null }[];
+}
+
+/** Ссылка под ответом: адрес обязателен, название бывает не у всех. */
+export interface Source {
+  url: string;
+  title: string;
+  date?: string;
+  /**
+   * Номер, под которым источник пришёл от провайдера. Не порядковый номер в
+   * нашем списке: поисковая модель ссылается прямо в тексте — «родился в
+   * Москве[1][6]», — и цифра там означает место в её собственном списке. По
+   * этим номерам такие хвосты и опознаются, чтобы вычистить их из ответа и не
+   * тронуть при этом чужое число в скобках. Выбросив из списка хоть одну
+   * строку, мы сдвинули бы все следующие — и вычистили бы не то.
+   */
+  n: number;
+}
+
+/**
+ * Ссылки из ответа. Провайдер, который про них не знает, полей не пришлёт —
+ * тогда пусто, и под ответом ничего не появится.
+ */
+export function readSources(chunk: WireChunk): Source[] {
+  const found: Source[] = Array.isArray(chunk.search_results)
+    ? (chunk.search_results as WireSearchResult[]).map((r, i) => ({
+        url: String(r?.url ?? ""),
+        title: String(r?.title ?? ""),
+        date: typeof r?.date === "string" ? r.date : undefined,
+        n: i + 1,
+      }))
+    : Array.isArray(chunk.citations)
+      // Голый список адресов: название взять неоткуда, покажем сам адрес.
+      ? (chunk.citations as unknown[]).map((u, i) => ({ url: String(u ?? ""), title: "", n: i + 1 }))
+      : [];
+
+  // Показываем только то, по чему можно щёлкнуть, и один раз — но номер у
+  // каждого остаётся свой, тот, что пришёл.
+  const seen = new Set<string>();
+  return found.filter((s) => {
+    if (!/^https?:\/\//i.test(s.url) || seen.has(s.url)) return false;
+    seen.add(s.url);
+    return true;
+  });
 }
 
 /** Описание инструмента в формате OpenAI function calling. */
@@ -82,6 +138,8 @@ export interface ChatResult {
   reasoning: string;
   usage: Usage | null;
   toolCalls: ToolCall[];
+  /** Ссылки, на которых построен ответ; у обычной модели их не бывает. */
+  sources: Source[];
   /**
    * Ответ оборван на пределе длины модели. Класть такой в заметку нельзя: он
    * заменит текст своей половиной, а выглядеть будет как обычная правка.
@@ -352,6 +410,7 @@ async function plainChat(
     reasoning,
     usage: readUsage(json.usage),
     toolCalls,
+    sources: readSources(json),
     truncated: json.choices?.[0]?.finish_reason === "length",
   };
 }
@@ -426,6 +485,7 @@ async function streamChat(
   let reasoning = "";
   let usage: Usage | null = null;
   let finish = "";
+  let sources: Source[] = [];
   const calls = new Map<number, ToolCall>();
 
   try {
@@ -437,6 +497,10 @@ async function streamChat(
 
       buffer = drainSse(buffer, (chunk) => {
         if (chunk.usage) usage = readUsage(chunk.usage);
+        // Ссылки приезжают своим полем и повторяются в каждом чанке — берём
+        // последний непустой набор, он самый полный.
+        const found = readSources(chunk);
+        if (found.length) sources = found;
         // Причина остановки приезжает в последнем чанке — с пустой дельтой,
         // поэтому читаем её до проверки на дельту.
         const reason = chunk.choices?.[0]?.finish_reason;
@@ -461,7 +525,7 @@ async function streamChat(
       // Остановка по кнопке — не ошибка: отдаём то, что успело прийти.
       // Недособранные вызовы инструментов при этом выбрасываем: половина
       // JSON-аргументов хуже, чем ничего.
-      return { text, reasoning, usage, toolCalls: [], truncated: false };
+      return { text, reasoning, usage, toolCalls: [], sources, truncated: false };
     }
     throw new ApiError(t("errStreamBroken") + " " + (e instanceof Error ? e.message : String(e)));
   } finally {
@@ -469,7 +533,14 @@ async function streamChat(
     reader.releaseLock();
   }
 
-  return { text, reasoning, usage, toolCalls: [...calls.values()], truncated: finish === "length" };
+  return {
+    text,
+    reasoning,
+    usage,
+    toolCalls: [...calls.values()],
+    sources,
+    truncated: finish === "length",
+  };
 }
 
 /**

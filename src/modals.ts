@@ -1,15 +1,22 @@
 import { App, Modal, Notice, Setting, SuggestModal, setIcon } from "obsidian";
 import { AiAction, factoryPrompt } from "./actions";
 import { t } from "./i18n";
+import { AiAssistSettings, providerLabel, providerRank } from "./types";
 
 /**
- * Правка действия целиком: название, промпт, что делать с ответом, иконка.
- * Работаем на копии — «Отмена» должна оставлять исходное нетронутым.
+ * Правка действия целиком: название, промпт, что делать с ответом, иконка,
+ * чем прогонять. Работаем на копии — «Отмена» должна оставлять исходное
+ * нетронутым.
  */
 export class ActionModal extends Modal {
   private draft: AiAction;
 
-  constructor(app: App, action: AiAction, private onSave: (action: AiAction) => void) {
+  constructor(
+    app: App,
+    action: AiAction,
+    private settings: AiAssistSettings,
+    private onSave: (action: AiAction) => void,
+  ) {
     super(app);
     this.draft = { ...action };
   }
@@ -46,6 +53,33 @@ export class ActionModal extends Modal {
           .setValue(this.draft.mode)
           .onChange((v) => (this.draft.mode = v as AiAction["mode"])),
       );
+
+    // Только настроенные провайдеры: предлагать прогон тем, у кого не выбрана
+    // модель, — значит заводить действие, которое откажется работать.
+    const ready = Object.entries(this.settings.profiles)
+      .filter(([, profile]) => profile.model)
+      .sort(([a], [b]) => providerRank(a) - providerRank(b) || a.localeCompare(b));
+    // Настроен один — выбирать не из чего, и строка только мешала бы.
+    if (ready.length > 1) {
+      const options: Record<string, string> = { "": t("actProviderPanel") };
+      for (const [name, profile] of ready) {
+        options[name] = `${providerLabel(name)} · ${profile.model}`;
+      }
+      // Провайдер мог быть выбран и потерян с тех пор — держим его в списке,
+      // иначе выпадающий список молча переставил бы действие на «как в панели».
+      const chosen = this.draft.provider ?? "";
+      if (chosen && !options[chosen]) options[chosen] = providerLabel(chosen);
+
+      new Setting(this.contentEl)
+        .setName(t("actProvider"))
+        .setDesc(t("actProviderDesc"))
+        .addDropdown((c) =>
+          c
+            .addOptions(options)
+            .setValue(chosen)
+            .onChange((v) => (this.draft.provider = v)),
+        );
+    }
 
     // Название иконки проверить нечем — списка имён Obsidian не отдаёт. Поэтому
     // рядом с полем живой пример: нарисовалось — значит имя существует.
