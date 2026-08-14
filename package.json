@@ -1,6 +1,6 @@
 {
   "name": "ai-assist",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "description": "Obsidian plugin: sidebar AI chat and in-place rewriting of the selected text.",
   "main": "main.js",
