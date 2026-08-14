@@ -6,7 +6,7 @@
  * же удобно проверить отбор тестом, не поднимая панель.
  */
 import { ContentPart } from "./api";
-import { HistoryItem, StoredChatMessage, isActionEntry } from "./types";
+import { HistoryItem, StoredChatMessage, isActionEntry, isDoc } from "./types";
 
 /**
  * Сколько символов ленты максимум уходит в запрос. Примерно 6–8 тысяч токенов:
@@ -31,15 +31,47 @@ export function messageText(m: StoredChatMessage): string {
  * Без этой строчки разговор выглядит как вопросы о пустоте.
  */
 export const IMAGE_GONE = "[An image was attached to this message; it is not included here.]";
+export const DOC_GONE = "[A document was attached to this message; it is not included here.]";
+export const DOC_CLIPPED = "[The document is longer than this — only the beginning is shown.]";
+
+/** Документ, приложенный к вопросу: он уходит текстом, а не файлом. */
+export interface AttachedDoc {
+  name: string;
+  text: string;
+  clipped: boolean;
+}
 
 /**
- * Реплика так, как она уходит в запрос. Без картинок — прежней строкой: массив
- * кусков понимают не все модели, и городить его на каждый вопрос ни за чем
- * нельзя. Картинки идут после текста: сперва вопрос, потом то, о чём он.
+ * Документ так, как его видит модель. Имя названо вслух: по нему видно, что
+ * это приложенный файл, а не кусок разговора, и на него можно сослаться в
+ * ответе. Про обрезку говорим там же — ответ по началу документа выглядит
+ * точно так же, как ответ по всему.
  */
-export function messageContent(m: StoredChatMessage, images: string[] = []): string | ContentPart[] {
-  const gone = !images.length && !!m.attachments?.length;
-  const text = gone ? `${messageText(m)}\n\n${IMAGE_GONE}` : messageText(m);
+export function docBlock(doc: AttachedDoc): string {
+  return `[Document "${doc.name}"]\n\n${doc.text}` + (doc.clipped ? `\n\n${DOC_CLIPPED}` : "");
+}
+
+/**
+ * Реплика так, как она уходит в запрос. Без вложений — прежней строкой: массив
+ * кусков понимают не все модели, и городить его на каждый вопрос ни за чем
+ * нельзя.
+ *
+ * Документы идут перед вопросом, как и фрагмент заметки: сперва то, о чём
+ * спрашивают, потом сам вопрос. Картинки — после текста, отдельными кусками.
+ */
+export function messageContent(
+  m: StoredChatMessage,
+  images: string[] = [],
+  docs: AttachedDoc[] = [],
+): string | ContentPart[] {
+  const attached = m.attachments ?? [];
+  // Вложение, которое в этот запрос не пошло, называем словами — иначе вопрос
+  // «что тут не так?» указывает в пустоту.
+  const gone: string[] = [];
+  if (!images.length && attached.some((a) => !isDoc(a))) gone.push(IMAGE_GONE);
+  if (!docs.length && attached.some(isDoc)) gone.push(DOC_GONE);
+
+  const text = [...docs.map(docBlock), messageText(m), ...gone].filter(Boolean).join("\n\n");
   if (!images.length) return text;
   return [
     { type: "text", text },

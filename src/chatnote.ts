@@ -8,16 +8,23 @@
 import { Source } from "./api";
 import { stripCitations } from "./cite";
 import { t } from "./i18n";
-import { Attachment, HistoryItem, isActionEntry } from "./types";
+import { Attachment, HistoryItem, isActionEntry, isDoc } from "./types";
 
 /**
- * Картинки над вопросом. Лежащая в хранилище встаёт обычной ссылкой — в
- * заметке она и покажется картинкой; у той, что жила в памяти, показывать
+ * Вложения над вопросом. Лежащее в хранилище встаёт обычной ссылкой — картинка
+ * в заметке и покажется картинкой; у того, что жило в памяти, показывать
  * нечего, и врать про это ссылкой на несуществующий файл нельзя.
+ *
+ * Документ идёт простой ссылкой, без восклицательного знака: встроенный PDF
+ * разворачивается в заметке читалкой на пол-экрана, а сохранённый разговор
+ * читают ради разговора.
  */
 function attachLines(files: Attachment[] | undefined): string {
   if (!files?.length) return "";
-  const lines = files.map((f) => (f.path ? `![[${f.path}]]` : `*${t("chatAttachNotSaved")}*`));
+  const lines = files.map((f) => {
+    if (!f.path) return `*${t("chatAttachNotSaved")}*`;
+    return isDoc(f) ? `[[${f.path}]]` : `![[${f.path}]]`;
+  });
   return lines.join("\n") + "\n\n";
 }
 

@@ -40,8 +40,9 @@ async function load(entry, name) {
 
 const { drainSse, endpoint, collectToolCalls, isLocalUrl, readSources } = await load("src/api.ts", "api");
 const { cleanReply, offsetAt, sectionAt, sectionName } = await load("src/actions.ts", "actions");
-const { contextWindow, messageText, messageContent } = await load("src/history.ts", "history");
-const { fitSize, isImagePath, embeddedImages, pastedName, stamp, humanSize, AttachmentStore } = await load("src/attach.ts", "attach");
+const { contextWindow, messageText, messageContent, docBlock } = await load("src/history.ts", "history");
+const { fitSize, isImagePath, isAttachablePath, embeddedFiles, pastedName, stamp, humanSize, AttachmentStore } = await load("src/attach.ts", "attach");
+const { isPdfPath, joinItems, tidy, clipPages } = await load("src/pdf.ts", "pdf");
 const { mergeSettings, providerOf, streamAvailable, streamAllowed, configFor, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank, toolsAllowed, builtinModels, activeConfig } = await load("src/types.ts", "types");
 const { chatToMarkdown } = await load("src/chatnote.ts", "chatnote");
 const { stripCitations } = await load("src/cite.ts", "cite");
@@ -1110,12 +1111,13 @@ check("файл без точки не картинка", isImagePath("README"),
 // Встроенные в заметку картинки: она уезжает модели текстом, и `![[схема.png]]`
 // та видит строчкой, а не изображением.
 const note = "Текст\n![[схема.png]]\nещё\n![подпись](Вложения/фото%20с%20дачи.jpg)\n![[заметка.md]]\n![](https://site/pic.png)";
-check("внутренняя ссылка на картинку находится", embeddedImages(note).includes("схема.png"), true);
-check("markdown-ссылка тоже находится", embeddedImages(note).includes("Вложения/фото с дачи.jpg"), true);
-check("встроенная заметка картинкой не считается", embeddedImages(note).includes("заметка.md"), false);
-check("картинка из интернета не вложение", embeddedImages(note).some((p) => p.startsWith("http")), false);
-check("повтор не задваивается", embeddedImages("![[один.png]] ![[один.png]]").length, 1);
-check("размер по ширине блока", embeddedImages("![[схема.png|400]]").length, 1);
+check("внутренняя ссылка на картинку находится", embeddedFiles(note).includes("схема.png"), true);
+check("markdown-ссылка тоже находится", embeddedFiles(note).includes("Вложения/фото с дачи.jpg"), true);
+check("встроенная заметка картинкой не считается", embeddedFiles(note).includes("заметка.md"), false);
+check("картинка из интернета не вложение", embeddedFiles(note).some((p) => p.startsWith("http")), false);
+check("повтор не задваивается", embeddedFiles("![[один.png]] ![[один.png]]").length, 1);
+check("размер по ширине блока", embeddedFiles("![[схема.png|400]]").length, 1);
+check("встроенный документ тоже находится", embeddedFiles("![[Книги/устав.pdf]]").length, 1);
 
 check("отметка времени без двоеточий", stamp(new Date(2026, 7, 7, 4, 5, 6)), "20260807040506");
 check("имя вставленной картинки с расширением", pastedName("image/png", "20260807040506").endsWith(".png"), true);
@@ -1164,6 +1166,57 @@ check("забытое вложение больше не отдаётся", stor
 check("соседнее при этом на месте", store.get("b") === shot, true);
 store.clear();
 check("выгрузка отпускает всё", store.get("b"), null);
+
+// ——— документы ———
+check("pdf узнаётся по расширению", isPdfPath("Книги/Устав.PDF"), true);
+check("картинка документом не считается", isPdfPath("схема.png"), false);
+check("прикладывать можно и то и другое", [isAttachablePath("a.pdf"), isAttachablePath("b.png"), isAttachablePath("c.md")], [true, true, false]);
+
+// pdf.js отдаёт текст обрывками строк, как он нарисован: склеенные подряд, они
+// превращаются в простыню без единого переноса и без пробелов между словами.
+check(
+  "обрывки строки склеиваются через пробел",
+  joinItems([{ str: "Первая" }, { str: "строка", hasEOL: true }, { str: "вторая" }]),
+  "Первая строка\nвторая",
+);
+check(
+  "перед запятой пробел не ставится",
+  joinItems([{ str: "слово" }, { str: ", ещё" }]),
+  "слово, ещё",
+);
+check("пустой кусок с переносом строку всё равно закрывает", joinItems([{ str: "", hasEOL: true }, { str: "низ" }]), "\nниз");
+
+check("вёрстка не превращается в пустоту", tidy("  раз  два  \n\n\n\n три "), "раз два\n\nтри");
+
+// Режем по границе страницы: оборванная на полуслове читается как ошибка
+// чтения, а не как сознательная обрезка.
+const pages = ["а".repeat(30), "б".repeat(30), "в".repeat(30)];
+check("страницы влезают целиком", clipPages(pages, 100).clipped, false);
+check("лишняя страница отсекается", clipPages(pages, 70).text.includes("в"), false);
+check("про обрезку сказано", clipPages(pages, 70).clipped, true);
+check("первая страница берётся даже длиннее предела", clipPages(pages, 5).text.length, 30);
+
+// Документ уходит модели текстом, названным по имени файла: по нему видно, что
+// это приложенный файл, а не кусок разговора.
+const block = docBlock({ name: "устав.pdf", text: "Пункт 1.", clipped: false });
+check("документ назван по имени", block.startsWith('[Document "устав.pdf"]'), true);
+check("текст документа на месте", block.includes("Пункт 1."), true);
+check("про обрезку документа модель предупреждена", docBlock({ name: "a.pdf", text: "т", clipped: true }).includes("only the beginning"), true);
+
+const withDoc = messageContent({ role: "user", content: "о чём тут?" }, [], [{ name: "у.pdf", text: "Текст", clipped: false }]);
+check("документ идёт перед вопросом", withDoc.startsWith('[Document "у.pdf"]'), true);
+check("вопрос остаётся в конце", withDoc.endsWith("о чём тут?"), true);
+// Документ в каждый следующий запрос не возят — он стоит денег так же, как картинка.
+const droppedDoc = messageContent({ role: "user", content: "о чём тут?", attachments: [{ id: "1", name: "у.pdf", mime: "application/pdf", size: 10 }] });
+check("про снятый документ модель предупреждена", droppedDoc.includes("A document was attached"), true);
+check("и это не путается с картинкой", droppedDoc.includes("An image was attached"), false);
+
+const savedDoc = chatToMarkdown(
+  [{ role: "user", content: "разбери", attachments: [{ id: "3", name: "у.pdf", mime: "application/pdf", size: 10, path: "Книги/у.pdf" }] }],
+  "м",
+  "д",
+);
+check("документ в заметке — обычной ссылкой, не встроенной", savedDoc.includes("\n[[Книги/у.pdf]]"), true);
 
 console.log(`\n${pass} прошло, ${fail} упало`);
 process.exit(fail ? 1 : 0);

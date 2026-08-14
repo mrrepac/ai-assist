@@ -436,6 +436,35 @@
   display: block;
 }
 
+/* Документ под репликой: показывать нечего, поэтому строчкой с именем. */
+.ai-assist-chat .ai-msg-doc {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  max-width: 100%;
+  padding: var(--size-2-2) var(--size-2-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  overflow: hidden;
+}
+
+.ai-assist-chat .ai-msg-doc span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-assist-chat .ai-msg-doc.is-clickable {
+  cursor: pointer;
+}
+
+.ai-assist-chat .ai-msg-doc.is-clickable:hover {
+  border-color: var(--text-accent);
+  color: var(--text-normal);
+}
+
 /* Картинки под репликой: то, о чём спрашивали. */
 .ai-assist-chat .ai-msg-files {
   display: flex;

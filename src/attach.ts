@@ -12,7 +12,8 @@
  */
 import { App, TFile } from "obsidian";
 import { t } from "./i18n";
-import { Attachment } from "./types";
+import { isPdfPath, pdfText } from "./pdf";
+import { Attachment, isDoc } from "./types";
 
 /**
  * Длинная сторона, до которой ужимаем. Модель всё равно смотрит на картинку
@@ -43,6 +44,7 @@ const MIME_BY_EXT: Record<string, string> = {
   gif: "image/gif",
   bmp: "image/bmp",
   avif: "image/avif",
+  pdf: "application/pdf",
 };
 
 function extOf(path: string): string {
@@ -52,6 +54,11 @@ function extOf(path: string): string {
 
 export function isImagePath(path: string): boolean {
   return IMAGE_EXTS.includes(extOf(path));
+}
+
+/** Всё, что плагин соглашается взять вложением: картинка или документ. */
+export function isAttachablePath(path: string): boolean {
+  return isImagePath(path) || isPdfPath(path);
 }
 
 /** MIME по имени файла: у файла с диска он есть, у пути в хранилище — нет. */
@@ -100,11 +107,11 @@ export function stamp(now: Date): string {
 }
 
 /**
- * Картинки, встроенные в текст заметки. Нужны, чтобы предложить их списком:
- * заметка с фотографией уезжает модели как есть, и `![[photo.png]]` она видит
+ * Картинки и документы, встроенные в текст заметки. Нужны, чтобы предложить их
+ * списком: заметка уезжает модели как есть, и `![[photo.png]]` она видит
  * строчкой текста, а не изображением.
  */
-export function embeddedImages(text: string): string[] {
+export function embeddedFiles(text: string): string[] {
   const out: string[] = [];
   // Оба вида ссылок: внутренняя ![[…]] и обычная markdown ![](…).
   const wiki = /!\[\[([^\]|#^]+)/g;
@@ -115,7 +122,7 @@ export function embeddedImages(text: string): string[] {
       const link = decodeURIComponent(m[1].trim());
       // Картинка из интернета — не файл хранилища, приложить её нечем.
       if (/^https?:/i.test(link)) continue;
-      if (isImagePath(link) && !out.includes(link)) out.push(link);
+      if (isAttachablePath(link) && !out.includes(link)) out.push(link);
     }
   }
   return out;
@@ -125,6 +132,12 @@ export function embeddedImages(text: string): string[] {
 export class AttachmentStore {
   private blobs = new Map<string, Blob>();
   private urls = new Map<string, string>();
+  /**
+   * Текст документов. Держим здесь, а не в самой ленте: это десятки тысяч
+   * знаков, а лента переписывается на диск на каждое слово. Документ из
+   * хранилища при надобности читается заново, ему эта память не нужна вовсе.
+   */
+  private texts = new Map<string, string>();
 
   put(id: string, blob: Blob): void {
     this.blobs.set(id, blob);
@@ -132,6 +145,14 @@ export class AttachmentStore {
 
   get(id: string): Blob | null {
     return this.blobs.get(id) ?? null;
+  }
+
+  putText(id: string, text: string): void {
+    this.texts.set(id, text);
+  }
+
+  getText(id: string): string | null {
+    return this.texts.get(id) ?? null;
   }
 
   /**
@@ -153,10 +174,12 @@ export class AttachmentStore {
     if (url) URL.revokeObjectURL(url);
     this.urls.delete(id);
     this.blobs.delete(id);
+    this.texts.delete(id);
   }
 
   clear(): void {
     for (const id of [...this.blobs.keys()]) this.forget(id);
+    this.texts.clear();
   }
 }
 
@@ -296,6 +319,30 @@ export async function attachmentData(
   }
   if (!blob) return null;
   return blobToDataUrl(blob);
+}
+
+/**
+ * Текст документа — то, что уедет модели вместо самого файла.
+ *
+ * Порядок тот же, что у картинки: сперва память сеанса, потом хранилище.
+ * Документ, принесённый с диска, в хранилище не копируется, поэтому после
+ * перезапуска брать его неоткуда — и это честный null, а не пустой текст.
+ */
+export async function attachmentText(
+  app: App,
+  store: AttachmentStore,
+  att: Attachment,
+): Promise<string | null> {
+  if (!isDoc(att)) return null;
+  const known = store.getText(att.id);
+  if (known !== null) return known;
+  if (!att.path) return null;
+  const blob = await vaultBlob(app, att.path);
+  if (!blob) return null;
+  const found = await pdfText(await blob.arrayBuffer());
+  if (!found) return null;
+  store.putText(att.id, found.text);
+  return found.text;
 }
 
 /**

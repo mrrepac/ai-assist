@@ -13,10 +13,11 @@ import { ApiConfig, ApiError, ChatMessage, Source, Usage, chat } from "./api";
 import {
   AttachmentStore,
   attachmentData,
+  attachmentText,
   attachmentUrl,
-  embeddedImages,
+  embeddedFiles,
   humanSize,
-  isImagePath,
+  isAttachablePath,
   mimeOf,
   newId,
   pastedName,
@@ -27,7 +28,8 @@ import {
 } from "./attach";
 import { stripCitations } from "./cite";
 import { DiffResult, diffWords } from "./diff";
-import { contextWindow, messageContent, messageText } from "./history";
+import { AttachedDoc, contextWindow, messageContent, messageText } from "./history";
+import { isPdfPath, pdfText } from "./pdf";
 import { t } from "./i18n";
 import { ImageSuggestModal, ModelSuggestModal } from "./modals";
 import { RECENT_LIMIT, grouped } from "./quickmenu";
@@ -42,6 +44,7 @@ import {
   configFor,
   imagesAllowed,
   isActionEntry,
+  isDoc,
   modelsFor,
   providerLabel,
   providerOf,
@@ -289,7 +292,7 @@ export class ChatView extends ItemView {
     const picker = clip.createEl("input", {
       cls: "ai-clip-input",
       type: "file",
-      attr: { accept: "image/*", multiple: true },
+      attr: { accept: "image/*,application/pdf", multiple: true },
     });
     picker.addEventListener("change", () => {
       const chosen = Array.from(picker.files ?? []);
@@ -1017,7 +1020,10 @@ export class ChatView extends ItemView {
     // Модель, которая картинок не принимает, отвечает на них отказом по
     // формату. Сказать об этом надо до отправки, а не после: до отказа ещё
     // надо дописать вопрос и нажать «отправить».
-    if (this.files.length === 0) return;
+    //
+    // Документов это не касается вовсе: они уходят текстом, и слепая модель
+    // читает их не хуже зрячей — предупреждать не о чем.
+    if (!this.files.some((f) => !isDoc(f))) return;
     const cfg = this.host.chatConfig();
     if (imagesAllowed(providerOf(cfg))) return;
     const warn = bar.createDiv({ cls: "ai-attach-warn" });
@@ -1051,13 +1057,8 @@ export class ChatView extends ItemView {
 
   private fileChip(bar: HTMLElement, att: Attachment): void {
     const chip = bar.createDiv({ cls: "ai-attach-item ai-attach-file" });
-    const url = attachmentUrl(this.app, this.host.attachments, att);
-    // Ужатая картинка — единственное, по чему её узнают: имена у снимков экрана
-    // одинаковые, а размер говорит только о цене.
-    if (url) chip.createEl("img", { cls: "ai-attach-thumb", attr: { src: url, alt: att.name } });
-    else setIcon(chip.createSpan({ cls: "ai-attach-icon" }), "image-off");
-    chip.createSpan({ cls: "ai-attach-text", text: att.name });
-    chip.createSpan({ cls: "ai-attach-size", text: humanSize(att.size) });
+    if (isDoc(att)) this.docChipBody(chip, att);
+    else this.imageChipBody(chip, att);
 
     const drop = chip.createEl("button", { cls: "ai-attach-drop clickable-icon" });
     setIcon(drop, "x");
@@ -1071,6 +1072,31 @@ export class ChatView extends ItemView {
       this.host.attachments.forget(att.id);
       this.paintAttach();
     };
+  }
+
+  private imageChipBody(chip: HTMLElement, att: Attachment): void {
+    const url = attachmentUrl(this.app, this.host.attachments, att);
+    // Ужатая картинка — единственное, по чему её узнают: имена у снимков экрана
+    // одинаковые, а размер говорит только о цене.
+    if (url) chip.createEl("img", { cls: "ai-attach-thumb", attr: { src: url, alt: att.name } });
+    else setIcon(chip.createSpan({ cls: "ai-attach-icon" }), "image-off");
+    chip.createSpan({ cls: "ai-attach-text", text: att.name });
+    chip.createSpan({ cls: "ai-attach-size", text: humanSize(att.size) });
+  }
+
+  /**
+   * У документа показывать нечего — вместо миниатюры значок. Зато есть что
+   * сказать: страницы и знаки. Знаки тут и есть цена вопроса, а «только
+   * начало» надо видеть до отправки, а не узнавать из ответа.
+   */
+  private docChipBody(chip: HTMLElement, att: Attachment): void {
+    setIcon(chip.createSpan({ cls: "ai-attach-icon" }), "file-text");
+    chip.createSpan({ cls: "ai-attach-text", text: att.name });
+    const size = { pages: att.pages ?? 0, chars: grouped(att.chars ?? 0) };
+    chip.createSpan({
+      cls: "ai-attach-size",
+      text: att.clipped ? t("chatAttachDocClipped", size) : t("chatAttachDoc", size),
+    });
   }
 
   /** Пункты «откуда взять картинку»: и по правой кнопке на скрепке, и в «ещё». */
@@ -1093,7 +1119,7 @@ export class ChatView extends ItemView {
   private pickFromVault(): void {
     const paths = this.app.vault
       .getFiles()
-      .filter((f) => isImagePath(f.path))
+      .filter((f) => isAttachablePath(f.path))
       .map((f) => f.path)
       .sort();
     if (!paths.length) {
@@ -1110,7 +1136,7 @@ export class ChatView extends ItemView {
    */
   private pickFromNote(): void {
     const note = this.host.readNote();
-    const links = note ? embeddedImages(note.text) : [];
+    const links = note ? embeddedFiles(note.text) : [];
     // Ссылка в заметке короткая — «схема.png»; настоящий путь ищет Obsidian,
     // он же разбирается с одинаковыми именами в разных папках.
     const paths: string[] = [];
@@ -1165,7 +1191,7 @@ export class ChatView extends ItemView {
       const file =
         this.app.vault.getAbstractFileByPath(link) ??
         this.app.metadataCache.getFirstLinkpathDest(link, this.host.targetPath() ?? "");
-      if (file instanceof TFile && isImagePath(file.path)) {
+      if (file instanceof TFile && isAttachablePath(file.path)) {
         e.preventDefault();
         void this.addFromVault(file.path);
       }
@@ -1183,7 +1209,9 @@ export class ChatView extends ItemView {
     const images = list.filter(
       // SVG — не картинка, а разметка: Electron её в холст не кладёт, а модели
       // такого вложения не принимают вовсе.
-      (f) => f.type !== "image/svg+xml" && (f.type.startsWith("image/") || isImagePath(f.name)),
+      (f) =>
+        f.type !== "image/svg+xml" &&
+        (f.type.startsWith("image/") || f.type === "application/pdf" || isAttachablePath(f.name)),
     );
     // Ни одной картинки во всей пачке — тут молчать нельзя: человек принёс файл
     // и не увидел вообще ничего, а это выглядит как сломанный плагин, а не как
@@ -1194,17 +1222,20 @@ export class ChatView extends ItemView {
     }
     const taken: Attachment[] = [];
     let failed = 0;
+    let scans = 0;
     for (const file of images) {
       if (this.files.length >= MAX_FILES) {
         new Notice(t("chatAttachLimit", { n: MAX_FILES }));
         break;
       }
       const name = fromClipboard ? pastedName(file.type, stamp(new Date())) : file.name;
-      const att = await this.addFile(file, name);
-      if (att) taken.push(att);
+      const got = await this.addFile(file, name);
+      if (typeof got === "object") taken.push(got);
+      else if (got === "notext") scans++;
       else failed++;
     }
     if (failed) new Notice(t("chatAttachFailed"));
+    if (scans) new Notice(t("chatAttachNoText"), 8000);
     // Настройка обещает положить картинку в хранилище, а приватный чат этого
     // обещания не выполнит никогда — сказать об этом надо сразу, а не после
     // отправки, когда файла уже ждут в папке вложений.
@@ -1229,7 +1260,10 @@ export class ChatView extends ItemView {
     const s = this.host.settings;
     if (!s.saveAttachments || s.privateChat) return;
     // Картинка из хранилища там уже лежит — класть её второй раз незачем.
-    const fresh = files.filter((a) => !a.path);
+    // Документ не кладём вовсе: настройка обещает оставлять картинки, и она
+    // права — снимок в чате потом хочется увидеть, а двадцатимегабайтный
+    // документ в папке вложений это мусор.
+    const fresh = files.filter((a) => !a.path && !isDoc(a));
     if (!fresh.length) return;
 
     const where = this.host.targetPath() ?? "";
@@ -1245,18 +1279,65 @@ export class ChatView extends ItemView {
   }
 
   /**
+   * Что принесли в чат. Документ и картинка расходятся здесь и дальше нигде не
+   * пересекаются: у одного берут текст, у другой — пиксели.
+   *
+   * `notext` — документ прочитан, а текста в нём нет: это скан, фотографии
+   * страниц. Отличать от «не прочитался» надо обязательно, потому что сказать
+   * человеку нужно разное.
+   */
+  private async addFile(blob: Blob, name: string): Promise<Attachment | "unreadable" | "notext"> {
+    return isPdfPath(name) || blob.type === "application/pdf"
+      ? this.addDoc(blob, name)
+      : this.addImage(blob, name);
+  }
+
+  /**
+   * Документ: текстовый слой читаем сразу, а не при отправке. Во-первых, на
+   * плашке должно быть видно, сколько знаков уедет, — это цена вопроса.
+   * Во-вторых, скан лучше опознать здесь: приложить пустоту и узнать об этом
+   * из ответа модели — худший из порядков.
+   */
+  private async addDoc(
+    blob: Blob,
+    name: string,
+    path?: string,
+  ): Promise<Attachment | "unreadable" | "notext"> {
+    const found = await pdfText(await blob.arrayBuffer());
+    if (!found) return "unreadable";
+    if (!found.text.trim()) return "notext";
+
+    const att: Attachment = {
+      id: newId(),
+      name,
+      mime: "application/pdf",
+      size: blob.size,
+      path,
+      pages: found.pages,
+      chars: found.text.length,
+      clipped: found.clipped || undefined,
+    };
+    // Сам файл держим тоже: по нему видно вес, а из хранилища его читать
+    // заново незачем, пока идёт этот сеанс.
+    this.host.attachments.put(att.id, blob);
+    this.host.attachments.putText(att.id, found.text);
+    this.files.push(att);
+    return att;
+  }
+
+  /**
    * Картинка, принесённая в чат: ужать и показать на плашке. До отправки она
    * живёт только в памяти сеанса — на диск её кладёт saveFiles, и только если
    * вопрос действительно уйдёт.
    */
-  private async addFile(blob: Blob, name: string): Promise<Attachment | null> {
+  private async addImage(blob: Blob, name: string): Promise<Attachment | "unreadable"> {
     let ready: Blob | null;
     try {
       ready = await prepareImage(blob);
     } catch {
       ready = null;
     }
-    if (!ready) return null;
+    if (!ready) return "unreadable";
     const att: Attachment = {
       id: newId(),
       name,
@@ -1269,14 +1350,25 @@ export class ChatView extends ItemView {
     return att;
   }
 
-  /** Картинка из хранилища: она там уже лежит, класть её второй раз незачем. */
+  /** Файл из хранилища: он там уже лежит, класть его второй раз незачем. */
   private async addFromVault(path: string): Promise<void> {
     if (this.files.length >= MAX_FILES) {
       new Notice(t("chatAttachLimit", { n: MAX_FILES }));
       return;
     }
     const raw = await vaultBlob(this.app, path);
-    const ready = raw ? await prepareImage(raw) : null;
+    if (!raw) {
+      new Notice(t("chatAttachFailed"));
+      return;
+    }
+    if (isPdfPath(path)) {
+      const got = await this.addDoc(raw, path.split("/").pop() ?? path, path);
+      if (got === "notext") new Notice(t("chatAttachNoText"), 8000);
+      else if (got === "unreadable") new Notice(t("chatAttachFailed"));
+      this.paintAttach();
+      return;
+    }
+    const ready = await prepareImage(raw);
     if (!ready) {
       new Notice(t("chatAttachFailed"));
       return;
@@ -1302,11 +1394,30 @@ export class ChatView extends ItemView {
     const out: string[] = [];
     let gone = 0;
     for (const att of files) {
+      if (isDoc(att)) continue;
       const data = await attachmentData(this.app, this.host.attachments, att);
       if (data) out.push(data);
       else gone++;
     }
     // Пропали обычно все разом — их и не пережил один и тот же перезапуск.
+    if (gone) new Notice(t("chatAttachGone"));
+    return out;
+  }
+
+  /**
+   * Документы вопроса — текстом, тем, что уедет модели. Текст живёт в памяти
+   * сеанса, а у документа из хранилища перечитывается по пути; принесённый с
+   * диска перезапуска не переживает, и об этом говорим вслух.
+   */
+  private async docsFor(files: Attachment[]): Promise<AttachedDoc[]> {
+    const out: AttachedDoc[] = [];
+    let gone = 0;
+    for (const att of files) {
+      if (!isDoc(att)) continue;
+      const text = await attachmentText(this.app, this.host.attachments, att);
+      if (text) out.push({ name: att.name, text, clipped: att.clipped === true });
+      else gone++;
+    }
     if (gone) new Notice(t("chatAttachGone"));
     return out;
   }
@@ -1491,14 +1602,23 @@ export class ChatView extends ItemView {
         ? -1
         : past.reduce((at, m, i) => (m.attachments?.length ? i : at), -1);
       for (const [i, m] of past.entries()) {
-        const seen = i === lastWithFiles ? await this.imagesFor(m.attachments ?? []) : [];
-        messages.push({ role: m.role, content: messageContent(m, seen) });
+        // Документ той же меркой, что картинка: он тоже стоит денег на каждом
+        // вопросе, и возить сорок тысяч знаков до конца разговора нельзя.
+        const own = i === lastWithFiles ? (m.attachments ?? []) : [];
+        const seen = await this.imagesFor(own);
+        const read = await this.docsFor(own);
+        messages.push({ role: m.role, content: messageContent(m, seen, read) });
       }
     }
     const images = await this.imagesFor(files);
+    const docs = await this.docsFor(files);
     messages.push({
       role: "user",
-      content: messageContent({ role: "user", content: text, quote, attachments: files }, images),
+      content: messageContent(
+        { role: "user", content: text, quote, attachments: files },
+        images,
+        docs,
+      ),
     });
 
     // Локальная ссылка: stop() обнуляет this.controller, а в catch ещё нужно
@@ -2024,6 +2144,18 @@ export class ChatView extends ItemView {
   private addThumbs(el: HTMLElement, files: Attachment[]): void {
     const row = el.createDiv({ cls: "ai-msg-files" });
     for (const att of files) {
+      if (isDoc(att)) {
+        // У документа показывать нечего — строчка с именем. Она же и ссылка,
+        // если файл лежит в хранилище.
+        const doc = row.createDiv({ cls: "ai-msg-doc" });
+        setIcon(doc.createSpan({ cls: "ai-attach-icon" }), "file-text");
+        doc.createSpan({ text: att.name });
+        if (att.path) {
+          doc.addClass("is-clickable");
+          doc.onclick = () => this.openAttachment(att);
+        }
+        continue;
+      }
       const url = attachmentUrl(this.app, this.host.attachments, att);
       if (!url) {
         row.createDiv({ cls: "ai-msg-file-gone", text: t("chatAttachGone") });
@@ -2035,11 +2167,14 @@ export class ChatView extends ItemView {
       });
       if (!att.path) continue;
       img.addClass("is-clickable");
-      img.onclick = () => {
-        const file = this.app.vault.getAbstractFileByPath(att.path ?? "");
-        if (file instanceof TFile) void this.app.workspace.getLeaf("tab").openFile(file);
-      };
+      img.onclick = () => this.openAttachment(att);
     }
+  }
+
+  /** Файл вложения новой вкладкой — заметка, над которой работали, остаётся. */
+  private openAttachment(att: Attachment): void {
+    const file = this.app.vault.getAbstractFileByPath(att.path ?? "");
+    if (file instanceof TFile) void this.app.workspace.getLeaf("tab").openFile(file);
   }
 
   /**

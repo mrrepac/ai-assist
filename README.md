@@ -48,6 +48,13 @@ sidebar, but the main road is selection → key → done.
   question. Images from earlier replies are not carried into a new request: each one is paid
   for on every question. A model that does not take images says so before you send, rather
   than by refusing afterwards.
+- **A PDF in the question.** A document is attached the same ways a picture is, but travels
+  as text: the plugin reads the text layer — the one already inside the PDF — and sends it
+  along with the question. So it works with any model, including the ones that cannot see
+  pictures. The chip shows up front how many pages and characters are going; a long document
+  is sent from the beginning, and it says so right there. A scan has no text in it at all,
+  and the plugin says plainly that there is nothing to pull out. It brings no reading
+  library of its own: it uses the one Obsidian's own PDF viewer runs on.
 - **An action can have its own model.** Proofreading is done just as well by the cheapest
   one, and judging a text without a strong one is pointless — pick a provider inside the
   action and it always goes there, whatever stands in the panel header.
@@ -145,6 +152,10 @@ a `data:` address, without being uploaded anywhere. With "Keep images brought in
 switched on it lands in the vault's attachment folder as the question is sent — the same
 folder Obsidian itself uses; switched off it lives until the next restart and never touches
 the disk. In a private chat it is never saved.
+
+From a PDF it is the text that goes, not the file: the plugin reads the text layer and sends
+it to the same provider the question goes to. The document itself is not copied into the
+vault — the setting about images does not cover it.
 
 Two things send more than the question itself. "Send the current note as context" attaches
 the open note to every request in the chat. And a model allowed to edit notes can read the
