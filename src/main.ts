@@ -23,6 +23,7 @@ import {
   systemFor,
 } from "./actions";
 import { ApiConfig, ApiError, Usage, chat } from "./api";
+import { AttachmentStore } from "./attach";
 import { chatToMarkdown } from "./chatnote";
 import { diffWords } from "./diff";
 import { I18nKey, t } from "./i18n";
@@ -137,6 +138,12 @@ interface Unfinished {
 export default class AiAssistPlugin extends Plugin implements ChatHost {
   settings!: AiAssistSettings;
   history: HistoryItem[] = [];
+  /**
+   * Картинки, приложенные к вопросам. Держит их плагин, а не панель: панель
+   * закрывают и открывают, а вложение от этого пропадать не должно. Тех, что
+   * легли в хранилище, это не касается — они читаются с диска по пути.
+   */
+  attachments = new AttachmentStore();
   private undoable = new Map<string, UndoRecord>();
   /** Оборванные правки, которые ещё можно дописать. Живут до перезапуска. */
   private unfinished = new Map<string, Unfinished>();
@@ -245,6 +252,9 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
 
   onunload(): void {
     this.stopAll();
+    // Временные ссылки на картинки живут до конца сеанса сами по себе —
+    // отпускаем их вместе с плагином, иначе это утечка ровно на их размер.
+    this.attachments.clear();
     // Отложенная запись истории: таймер мог быть заведён за секунду до
     // выгрузки. Гасим его и дописываем сейчас — иначе он сработает, когда
     // плагина уже нет, а последние сообщения пропадут.

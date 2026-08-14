@@ -95,6 +95,28 @@ const en = {
   chatAttachSize: "{chars} chars",
   chatAttachDrop: "Do not ask about this fragment",
   chatAttached: "Selected fragment ({chars} chars)",
+  // ——— вложения ———
+  attachKb: "{n} KB",
+  attachMb: "{n} MB",
+  attachPasted: "Pasted image",
+  chatClip: "Attach an image",
+  chatClipVault: "Image from the vault…",
+  chatClipNote: "Image from this note…",
+  chatClipNoneInNote: "No images in the open note",
+  chatClipNoImages: "There are no images in the vault",
+  chatAttachRemove: "Do not send this image",
+  chatAttachDropHere: "Drop it — I will attach it to the question",
+  chatAttachFailed: "Could not read the image",
+  chatAttachNotImage: "Only images can be attached",
+  chatAttachSaved: "Saved to the vault: {path}",
+  chatAttachSavedMany: "Saved to the vault: {n} images",
+  chatAttachSaveFailed: "Could not save it to the vault — the image will not survive a restart",
+  chatAttachLimit: "No more than {n} images per question",
+  chatAttachBlind: "{model} does not accept images",
+  chatAttachSwitch: "Ask a different one",
+  chatAttachGone: "The image did not survive the restart",
+  chatAttachPrivate: "In a private chat the image is not saved to the vault",
+  chatAttachNotSaved: "(image, not saved to the vault)",
   chatNoteFragment: "About the fragment:",
   chatCopied: "Copied",
   chatInserted: "Inserted into the note",
@@ -255,6 +277,13 @@ const en = {
   setNewNoteRoot: "The vault root",
   setNewNoteFolder: "One folder",
   setNewNoteBeside: "Next to the note being worked on",
+  setSaveAttach: "Keep images brought into the chat",
+  setSaveAttachDesc:
+    "An image pasted or dropped into the chat goes to the attachment folder along with the " +
+    "question — the same folder Obsidian itself uses when you paste into a note. Removed before " +
+    "you send, it leaves nothing behind. Turned off, it lives only until the next " +
+    "restart: the vault stays clean, but you cannot ask about yesterday’s screenshot again. " +
+    "In a private chat nothing is ever written to the vault.",
   setNewNotePath: "The folder",
   setNewNotePathDesc: "It will be created if it is not there yet. Empty means the vault root.",
   noSelection: "Select the text to work on",
@@ -395,6 +424,7 @@ const en = {
     "ask again if the work is not finished.",
   errTimeout: "The provider stopped answering — the request was dropped",
   errTools: "This model does not seem to support tools — turn them off in the settings",
+  errImages: "This model does not seem to accept images — ask another one, or detach the file",
   errModelList: "The provider did not return a list of models",
 };
 
@@ -492,6 +522,28 @@ const ru: typeof en = {
   chatAttachSize: "{chars} зн.",
   chatAttachDrop: "Не спрашивать про этот фрагмент",
   chatAttached: "Выделенный фрагмент ({chars} зн.)",
+  // ——— вложения ———
+  attachKb: "{n} КБ",
+  attachMb: "{n} МБ",
+  attachPasted: "Вставленная картинка",
+  chatClip: "Приложить картинку",
+  chatClipVault: "Картинка из хранилища…",
+  chatClipNote: "Картинка из этой заметки…",
+  chatClipNoneInNote: "В открытой заметке картинок нет",
+  chatClipNoImages: "В хранилище нет картинок",
+  chatAttachRemove: "Не отправлять эту картинку",
+  chatAttachDropHere: "Отпусти — приложу к вопросу",
+  chatAttachFailed: "Не вышло прочитать картинку",
+  chatAttachNotImage: "Приложить можно только картинку",
+  chatAttachSaved: "Сохранено в хранилище: {path}",
+  chatAttachSavedMany: "Сохранено в хранилище: {n} картинки",
+  chatAttachSaveFailed: "Не вышло положить в хранилище — картинка не переживёт перезапуск",
+  chatAttachLimit: "Больше {n} картинок за раз не отправляю",
+  chatAttachBlind: "{model} не принимает картинки",
+  chatAttachSwitch: "Спросить другую",
+  chatAttachGone: "Картинка не пережила перезапуск",
+  chatAttachPrivate: "В приватном чате картинка в хранилище не сохраняется",
+  chatAttachNotSaved: "(картинка, в хранилище не сохранена)",
   chatNoteFragment: "О фрагменте:",
   chatCopied: "Скопировано",
   chatInserted: "Вставлено в заметку",
@@ -649,6 +701,13 @@ const ru: typeof en = {
   setNewNoteRoot: "В корень хранилища",
   setNewNoteFolder: "В одну папку",
   setNewNoteBeside: "Рядом с рабочей заметкой",
+  setSaveAttach: "Оставлять картинки, принесённые в чат",
+  setSaveAttachDesc:
+    "Картинка, вставленная или перетащенная в чат, вместе с вопросом ложится в папку вложений — " +
+    "ту же, куда её кладёт сам Obsidian при вставке в заметку. Снятая с плашки до отправки следа " +
+    "не оставляет. Выключено — живёт только до перезапуска: " +
+    "хранилище чистое, но спросить заново про вчерашний скриншот уже не выйдет. " +
+    "В приватном чате в хранилище не пишется ничего и никогда.",
   setNewNotePath: "Папка",
   setNewNotePathDesc: "Если её нет — будет создана. Пусто — то же, что корень.",
   noSelection: "Выдели текст, с которым работать",
@@ -787,6 +846,7 @@ const ru: typeof en = {
     "спроси ещё раз, если работа не доведена до конца.",
   errTimeout: "Провайдер перестал отвечать — запрос снят",
   errTools: "Похоже, эта модель не умеет инструменты — выключи их в настройках",
+  errImages: "Похоже, эта модель не принимает картинки — спроси другую или сними вложение",
   errModelList: "Провайдер не отдал список моделей",
 };
 

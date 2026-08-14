@@ -5,6 +5,7 @@
  * сообщений нельзя — двадцать реплик бывают и на строчку, и на страницу. Здесь
  * же удобно проверить отбор тестом, не поднимая панель.
  */
+import { ContentPart } from "./api";
 import { HistoryItem, StoredChatMessage, isActionEntry } from "./types";
 
 /**
@@ -22,6 +23,28 @@ export const CONTEXT_MESSAGES = 40;
  */
 export function messageText(m: StoredChatMessage): string {
   return m.quote ? `[Selected fragment of the note]\n${m.quote}\n\n${m.content}` : m.content;
+}
+
+/**
+ * Приписка к прошлой реплике, картинки которой в этот запрос не пошли: за
+ * каждую платят на каждом вопросе, и старые в какой-то момент остаются позади.
+ * Без этой строчки разговор выглядит как вопросы о пустоте.
+ */
+export const IMAGE_GONE = "[An image was attached to this message; it is not included here.]";
+
+/**
+ * Реплика так, как она уходит в запрос. Без картинок — прежней строкой: массив
+ * кусков понимают не все модели, и городить его на каждый вопрос ни за чем
+ * нельзя. Картинки идут после текста: сперва вопрос, потом то, о чём он.
+ */
+export function messageContent(m: StoredChatMessage, images: string[] = []): string | ContentPart[] {
+  const gone = !images.length && !!m.attachments?.length;
+  const text = gone ? `${messageText(m)}\n\n${IMAGE_GONE}` : messageText(m);
+  if (!images.length) return text;
+  return [
+    { type: "text", text },
+    ...images.map((url) => ({ type: "image_url" as const, image_url: { url } })),
+  ];
 }
 
 /**

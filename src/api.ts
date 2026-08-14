@@ -8,13 +8,34 @@ export interface ToolCall {
   arguments: string;
 }
 
+/**
+ * Кусок реплики, когда в ней не только текст. Картинка уходит адресом
+ * data:image/…;base64,… — так её принимают все OpenAI-совместимые провайдеры,
+ * и не нужно никуда её выкладывать, чтобы модель дотянулась.
+ */
+export type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  /**
+   * Строка — обычная реплика, массив — реплика с вложениями. Второй вид
+   * понимают не все модели, поэтому строкой остаётся всё, где картинок нет:
+   * лишний массив на пустом месте отдельные провайдеры не принимают.
+   */
+  content: string | ContentPart[];
   /** Ответ модели, попросившей вызвать инструменты. */
   tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[];
   /** Ответ на конкретный вызов (role: "tool"). */
   tool_call_id?: string;
+}
+
+/** Есть ли в запросе картинки — от этого зависит, чем объяснять отказ провайдера. */
+export function hasImages(messages: ChatMessage[]): boolean {
+  return messages.some(
+    (m) => Array.isArray(m.content) && m.content.some((p) => p.type === "image_url"),
+  );
 }
 
 /*
@@ -296,8 +317,12 @@ function body(cfg: ApiConfig, messages: ChatMessage[], opts: ChatOptions): strin
   return JSON.stringify(payload);
 }
 
-/** Ответ об ошибке у всех OpenAI-совместимых один: {error:{message}}. */
-function describeError(status: number, raw: string): ApiError {
+/**
+ * Ответ об ошибке у всех OpenAI-совместимых один: {error:{message}}.
+ * withImages — в запросе были картинки: тогда отказ по формату почти наверняка
+ * про них, и сказать это надо прямо.
+ */
+function describeError(status: number, raw: string, withImages = false): ApiError {
   let detail = "";
   try {
     const parsed = JSON.parse(raw) as { error?: { message?: string }; message?: string } | null;
@@ -319,7 +344,15 @@ function describeError(status: number, raw: string): ApiError {
   const head = known[status] ?? `${t("errHttp")} ${status}`;
   // Модель без function calling отвечает на инструменты отказом по формату, и из
   // голого «провайдер отклонил запрос» этого никак не понять.
-  const hint = /tool|function[ _-]?call/i.test(detail) ? " " + t("errTools") : "";
+  // То же с картинками: незрячая модель отвечает на них жалобой на content, и
+  // без подсказки это выглядит как поломка плагина, а не как «эта не умеет».
+  // Смотрим не только на текст отказа: провайдеры описывают его кто как, а вот
+  // то, что картинка в запросе была, известно наверняка.
+  const hint = /tool|function[ _-]?call/i.test(detail)
+    ? " " + t("errTools")
+    : withImages && status >= 400 && status < 500
+      ? " " + t("errImages")
+      : "";
   return new ApiError((detail ? `${head} — ${detail}` : head) + hint, status);
 }
 
@@ -391,7 +424,7 @@ async function plainChat(
   } finally {
     race.cancel();
   }
-  if (res.status >= 400) throw describeError(res.status, res.text ?? "");
+  if (res.status >= 400) throw describeError(res.status, res.text ?? "", hasImages(messages));
 
   const json = readJson(res.text ?? "") as WireChunk | null;
   if (!json) throw new ApiError(t("errBadReply"));
@@ -471,7 +504,7 @@ async function streamChat(
   }
   if (!res.ok) {
     guard.done();
-    throw describeError(res.status, await res.text().catch(() => ""));
+    throw describeError(res.status, await res.text().catch(() => ""), hasImages(messages));
   }
   if (!res.body) {
     guard.done();

@@ -614,6 +614,19 @@ export class AiAssistSettingTab extends PluginSettingTab {
         );
     }
 
+    // Картинку в чат приносят из буфера и мышью — и она либо остаётся в
+    // хранилище, либо не переживает перезапуска. Решение об этом стоит рядом с
+    // решением о новых заметках: оба про то, что плагин пишет на диск.
+    new Setting(containerEl)
+      .setName(t("setSaveAttach"))
+      .setDesc(t("setSaveAttachDesc"))
+      .addToggle((c) =>
+        c.setValue(s.saveAttachments).onChange(async (v) => {
+          s.saveAttachments = v;
+          await this.save();
+        }),
+      );
+
     new Setting(containerEl).setName(t("setToolsHead")).setHeading();
 
     new Setting(containerEl)

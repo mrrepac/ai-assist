@@ -8,7 +8,18 @@
 import { Source } from "./api";
 import { stripCitations } from "./cite";
 import { t } from "./i18n";
-import { HistoryItem, isActionEntry } from "./types";
+import { Attachment, HistoryItem, isActionEntry } from "./types";
+
+/**
+ * Картинки над вопросом. Лежащая в хранилище встаёт обычной ссылкой — в
+ * заметке она и покажется картинкой; у той, что жила в памяти, показывать
+ * нечего, и врать про это ссылкой на несуществующий файл нельзя.
+ */
+function attachLines(files: Attachment[] | undefined): string {
+  if (!files?.length) return "";
+  const lines = files.map((f) => (f.path ? `![[${f.path}]]` : `*${t("chatAttachNotSaved")}*`));
+  return lines.join("\n") + "\n\n";
+}
 
 /**
  * Список источников под ответом. Нумерация сквозная: в самом тексте ссылок на
@@ -37,7 +48,8 @@ export function chatToMarkdown(history: HistoryItem[], model: string, when: stri
   const parts: string[] = [];
   for (const item of history) {
     if (isActionEntry(item)) continue;
-    if (!item.content.trim()) continue;
+    // Вопрос из одних картинок текста не имеет вовсе, а сохранять его надо.
+    if (!item.content.trim() && !(item.role === "user" && item.attachments?.length)) continue;
     if (item.role !== "user") {
       // Хвосты вида [1][6] из текста убираем, а список источников дописываем:
       // сохранённый ответ поисковой модели без них — набор утверждений, которые
@@ -48,10 +60,12 @@ export function chatToMarkdown(history: HistoryItem[], model: string, when: stri
     }
     // Фрагмент, о котором был вопрос, идёт над ним: без него сохранённый
     // разговор начинается с «а покороче?» и ничего не значит.
+    // Вопрос мог быть и одной картинкой — тогда цитировать нечего.
+    const body = item.content.trim() ? quote(item.content) : "";
     const asked = item.quote
-      ? `*${t("chatNoteFragment")}*\n\n${quote(item.quote)}\n\n${quote(item.content)}`
-      : quote(item.content);
-    parts.push(`**${t("chatYou")}**\n\n${asked}`);
+      ? `*${t("chatNoteFragment")}*\n\n${quote(item.quote)}\n\n${body}`
+      : body;
+    parts.push(`**${t("chatYou")}**\n\n${attachLines(item.attachments)}${asked}`.trimEnd());
   }
   if (parts.length === 0) return "";
   return `*${t("chatNoteHead", { model, when })}*\n\n${parts.join("\n\n---\n\n")}\n`;

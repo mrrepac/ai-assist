@@ -41,6 +41,13 @@ sidebar, but the main road is selection → key → done.
 - **Ask about a fragment.** Select a piece of a note and go to the chat: it comes along as
   an attachment, so the question can be just "and shorter?" — and the fragment stays with
   the conversation for the questions that follow.
+- **An image with the question.** A screenshot from the clipboard (`Ctrl+V`), a file dragged
+  straight into the panel, the paperclip in the footer — or a right-click on it: "from the
+  vault" and "from this note", by the images embedded in it. Before it is sent the image is
+  scaled down to a sane size, its weight is shown on the chip, and it travels along with the
+  question. Images from earlier replies are not carried into a new request: each one is paid
+  for on every question. A model that does not take images says so before you send, rather
+  than by refusing afterwards.
 - **An action can have its own model.** Proofreading is done just as well by the cheapest
   one, and judging a text without a strong one is pointless — pick a provider inside the
   action and it always goes there, whatever stands in the panel header.
@@ -110,7 +117,8 @@ Everything lives in three sections:
   what to do when nothing is selected (the whole note / the section / the paragraph /
   nothing), the length past which it asks before sending, token usage display, the model
   for a private chat, where new notes go (the vault root / a folder of your own / next to
-  the note being worked on), note editing tools, the system prompt for the chat.
+  the note being worked on), whether images brought into the chat are kept in the vault,
+  note editing tools, the system prompt for the chat.
 - **Quick menu** — the keys: five by default, more if you add them, and a row can be
   dragged by its handle; plus what the plugin puts into the editor's context menu. Each
   key is an action, and this is where an action is
@@ -131,6 +139,12 @@ The text you run an action on goes to the provider you configured, and nowhere e
 plugin has no telemetry, no analytics and no server of its own; the settings live in
 `.obsidian/plugins/ai-assist/data.json` and the chat history in `history.json` next to it,
 inside your vault.
+
+An image attached to a question goes to that same provider and inside the request itself, as
+a `data:` address, without being uploaded anywhere. With "Keep images brought into the chat"
+switched on it lands in the vault's attachment folder as the question is sent — the same
+folder Obsidian itself uses; switched off it lives until the next restart and never touches
+the disk. In a private chat it is never saved.
 
 Two things send more than the question itself. "Send the current note as context" attaches
 the open note to every request in the chat. And a model allowed to edit notes can read the

@@ -201,6 +201,32 @@ export function askConfirm(
   });
 }
 
+/**
+ * Выбор картинки из хранилища. Показываем имя и папку раздельно: снимки экрана
+ * называются одинаково, и без пути их не различить.
+ */
+export class ImageSuggestModal extends SuggestModal<string> {
+  constructor(app: App, private paths: string[], private onPick: (path: string) => void) {
+    super(app);
+    this.setPlaceholder(t("chatClipVault"));
+  }
+
+  getSuggestions(query: string): string[] {
+    const q = query.toLowerCase();
+    return this.paths.filter((p) => p.toLowerCase().includes(q));
+  }
+
+  renderSuggestion(path: string, el: HTMLElement): void {
+    const cut = path.lastIndexOf("/");
+    el.createDiv({ text: cut === -1 ? path : path.slice(cut + 1) });
+    if (cut !== -1) el.createDiv({ cls: "ai-suggest-path", text: path.slice(0, cut) });
+  }
+
+  onChooseSuggestion(path: string): void {
+    this.onPick(path);
+  }
+}
+
 /** Выбор модели из того, что отдал провайдер. */
 export class ModelSuggestModal extends SuggestModal<string> {
   constructor(app: App, private models: string[], private onPick: (model: string) => void) {

@@ -6,6 +6,7 @@
   height: 100%;
   padding: 0;
   gap: 0;
+  position: relative; /* якорь для надписи о перетаскивании */
 }
 
 .ai-assist-chat .ai-list-wrap {
@@ -330,18 +331,142 @@
   color: var(--text-faint);
 }
 
-/* Прикреплённый фрагмент заметки: о нём пойдёт вопрос. */
+/* Плашка над полем ввода: фрагмент заметки и картинки, о которых пойдёт вопрос. */
 .ai-assist-chat .ai-attach {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--size-2-2);
   flex-basis: 100%;
   min-width: 0;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.ai-assist-chat .ai-attach-item {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2);
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--size-2-1) var(--size-2-2);
+  border-radius: var(--radius-s);
+  background-color: var(--background-modifier-hover);
+}
+
+/* Фрагмент читают глазами — ему целая строка; картинки встают рядком. */
+.ai-assist-chat .ai-attach-quote {
+  flex: 1 1 100%;
+}
+
+.ai-assist-chat .ai-attach-file .ai-attach-text {
+  flex: 0 1 auto;
+  max-width: 12em;
+}
+
+.ai-assist-chat .ai-attach-thumb {
+  flex-shrink: 0;
+  width: 2em;
+  height: 2em;
+  object-fit: cover;
+  border-radius: var(--radius-s);
+}
+
+/* Модель не видит картинок: сказать до отправки, а не после отказа. */
+.ai-assist-chat .ai-attach-warn {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: var(--size-2-2);
+  color: var(--text-warning);
+}
+
+.ai-assist-chat .ai-attach-switch {
+  padding: 0 var(--size-2-2);
+  box-shadow: none;
+  background-color: transparent;
+  color: var(--text-accent);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+}
+
+/* Скрепка: настоящий label, внутри которого спрятан input[type=file]. */
+.ai-assist-chat .ai-clip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--size-4-2);
+  cursor: pointer;
+}
+
+.ai-assist-chat .ai-clip-input {
+  display: none;
+}
+
+/* Картинку тащат мышью — панель должна показать, что готова её принять. */
+.ai-assist-chat.is-dropping {
+  outline: 2px dashed var(--text-accent);
+  outline-offset: -4px;
+}
+
+/*
+ * Что именно будет с перетащенным. Указатель проходит сквозь надпись насквозь:
+ * иначе она перехватила бы и сам drop, и уход указателя за край панели — рамка
+ * мигала бы, а картинка не долетала.
+ */
+.ai-assist-chat .ai-drop-hint {
+  display: none;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 80%;
+  padding: var(--size-4-2) var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  text-align: center;
+  pointer-events: none;
+}
+
+.ai-assist-chat.is-dropping .ai-drop-hint {
+  display: block;
+}
+
+/* Картинки под репликой: то, о чём спрашивали. */
+.ai-assist-chat .ai-msg-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-2-2);
+  margin-bottom: var(--size-2-2);
+}
+
+.ai-assist-chat .ai-msg-file {
+  max-width: 12em;
+  max-height: 12em;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.ai-assist-chat .ai-msg-file.is-clickable {
+  cursor: pointer;
+}
+
+.ai-assist-chat .ai-msg-file-gone {
   padding: var(--size-2-1) var(--size-2-2);
   border-radius: var(--radius-s);
   background-color: var(--background-modifier-hover);
   font-size: var(--font-ui-smaller);
-  color: var(--text-muted);
+  color: var(--text-faint);
+}
+
+/* Папка под именем файла в списке картинок хранилища. */
+.ai-suggest-path {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
 }
 
 .ai-assist-chat .ai-attach-icon {

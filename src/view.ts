@@ -5,24 +5,42 @@ import {
   Menu,
   Notice,
   Platform,
+  TFile,
   WorkspaceLeaf,
   setIcon,
 } from "obsidian";
 import { ApiConfig, ApiError, ChatMessage, Source, Usage, chat } from "./api";
+import {
+  AttachmentStore,
+  attachmentData,
+  attachmentUrl,
+  embeddedImages,
+  humanSize,
+  isImagePath,
+  mimeOf,
+  newId,
+  pastedName,
+  prepareImage,
+  saveToVault,
+  stamp,
+  vaultBlob,
+} from "./attach";
 import { stripCitations } from "./cite";
 import { DiffResult, diffWords } from "./diff";
-import { contextWindow, messageText } from "./history";
+import { contextWindow, messageContent, messageText } from "./history";
 import { t } from "./i18n";
-import { ModelSuggestModal } from "./modals";
+import { ImageSuggestModal, ModelSuggestModal } from "./modals";
 import { RECENT_LIMIT, grouped } from "./quickmenu";
 import { ParsedCall, ToolHost, parseCall, runCall, toolSpecs } from "./tools";
 import {
   ActionEntry,
   AiAssistSettings,
+  Attachment,
   HistoryItem,
   ProviderProfile,
   StoredChatMessage,
   configFor,
+  imagesAllowed,
   isActionEntry,
   modelsFor,
   providerLabel,
@@ -35,6 +53,13 @@ import {
 
 /** Сколько раз подряд модель может ходить за инструментами в одном запросе. */
 const MAX_TOOL_STEPS = 5;
+
+/**
+ * Сколько картинок уходит за один вопрос. Предел не от жадности провайдера, а
+ * от цены: каждая картинка — это заметная доля запроса, и десяток разом
+ * приложить можно только по недосмотру.
+ */
+const MAX_FILES = 4;
 
 /** Приписка модели к обрезанной заметке — по-английски, как и весь служебный текст. */
 const CLIPPED = "[The note is longer than this — only the beginning is shown.]";
@@ -59,6 +84,12 @@ export interface ChatHost extends ToolHost {
   /** Чем отвечает панель сейчас: у приватного чата может быть своя модель. */
   chatConfig(): ApiConfig;
   history: HistoryItem[];
+  /**
+   * Картинки, у которых нет пути в хранилище. Живут в плагине, а не в панели:
+   * панель закрывают и открывают, а приложенная картинка от этого пропадать не
+   * должна.
+   */
+  attachments: AttachmentStore;
   persistHistory(): void;
   /** Записать настройки: панель меняет модель и провайдера прямо из шапки. */
   saveSettings(): Promise<void>;
@@ -105,6 +136,12 @@ export interface SubmitOptions {
    */
   quote?: string | null;
   /**
+   * Картинки, приложенные к вопросу. Не передано — берутся те, что лежат на
+   * плашке; null — вопрос идёт без картинок. Так повтор уходит с тем же
+   * вложением, что и в первый раз, а не с тем, что успели приложить после.
+   */
+  files?: Attachment[] | null;
+  /**
    * Чем спрашивать, если не тем, что стоит в настройках. Так «ещё раз» умеет
    * позвать другую модель, не переключая на неё плагин.
    */
@@ -136,6 +173,8 @@ export class ChatView extends ItemView {
   private msgEls = new WeakMap<StoredChatMessage, HTMLElement>();
   /** Выделение, о котором пойдёт вопрос. Показано плашкой над полем ввода. */
   private attached: { path: string; text: string } | null = null;
+  /** Картинки, приложенные к следующему вопросу. Уходят вместе с ним и снимаются. */
+  private files: Attachment[] = [];
   /** Снятый крестиком фрагмент: пока выделение то же, обратно не подхватываем. */
   private dismissed: string | null = null;
   /** Где стоим, листая прошлые вопросы стрелками; -1 — не листаем. */
@@ -241,6 +280,33 @@ export class ChatView extends ItemView {
     this.registerDomEvent(root, "focusin", () => this.catchSelection());
     this.catchSelection();
 
+    // Скрепка — это label с input внутри, а не кнопка: диалог выбора файла из
+    // кода не открывается, пока в Obsidian не открыта ни одна заметка, — а чат
+    // как раз тогда и открывают. Настоящий щелчок по label работает всегда.
+    const clip = foot.createEl("label", { cls: "ai-clip clickable-icon" });
+    setIcon(clip, "paperclip");
+    clip.setAttr("aria-label", t("chatClip"));
+    const picker = clip.createEl("input", {
+      cls: "ai-clip-input",
+      type: "file",
+      attr: { accept: "image/*", multiple: true },
+    });
+    picker.addEventListener("change", () => {
+      const chosen = Array.from(picker.files ?? []);
+      // Поле чистим сразу: иначе тот же файл вторым разом не выберется — событие
+      // change на прежнем значении не случается.
+      picker.value = "";
+      void this.takeFiles(chosen);
+    });
+    // Хранилище — вторым способом, по правой кнопке: своей строки в подвале оно
+    // не стоит, а в меню «ещё» те же два пункта есть и на телефоне.
+    clip.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const menu = new Menu();
+      this.addClipItems(menu);
+      menu.showAtMouseEvent(e);
+    });
+
     this.inputEl = foot.createEl("textarea", {
       cls: "ai-input",
       attr: { rows: "2", placeholder: t("chatPlaceholder") },
@@ -263,6 +329,17 @@ export class ChatView extends ItemView {
       this.autoGrow();
       this.saveDraft();
     });
+    // Картинка из буфера: скриншот делают и тут же спрашивают о нём, и путь
+    // «сохрани файл — найди файл — приложи файл» здесь лишний целиком.
+    this.inputEl.addEventListener("paste", (e) => {
+      const images = Array.from(e.clipboardData?.files ?? []).filter((f) =>
+        f.type.startsWith("image/"),
+      );
+      if (!images.length) return;
+      e.preventDefault();
+      void this.takeFiles(images, true);
+    });
+    this.setupDrop(root);
 
     this.sendBtn = foot.createEl("button", { cls: "ai-send mod-cta" });
     this.paintSendButton();
@@ -292,6 +369,11 @@ export class ChatView extends ItemView {
     if (model) model.textContent = this.host.chatConfig().model;
     this.paintReach();
     this.paintTotal();
+    // Плашку тоже: предупреждение «эта модель не принимает картинки» смотрит на
+    // ту модель, что стоит сейчас. Без этого кнопка «спросить другую» внутри
+    // самого предупреждения его же и не убирала бы, а переключение на слепую
+    // модель проходило бы молча — до отказа провайдера.
+    this.paintAttach();
   }
 
   /**
@@ -464,6 +546,11 @@ export class ChatView extends ItemView {
 
   private openMoreMenu(e: MouseEvent): void {
     const menu = new Menu();
+    // Картинка из хранилища: скрепка в подвале открывает диск, а сюда приходят
+    // за тем, что уже лежит в заметках. На телефоне это ещё и единственный
+    // путь — правой кнопки там нет.
+    this.addClipItems(menu);
+    menu.addSeparator();
     menu.addItem((item) =>
       item
         .setTitle(t("chatCopyAll"))
@@ -518,20 +605,27 @@ export class ChatView extends ItemView {
   newChat(priv = false): void {
     this.stop();
     const wasPrivate = this.host.settings.privateChat;
-    if (this.host.history.length === 0 && wasPrivate === priv) return;
+    // Картинка на плашке — тоже разговор: пока она там, «новому чату» есть что
+    // очищать, даже если лента пуста.
+    if (this.host.history.length === 0 && this.files.length === 0 && wasPrivate === priv) return;
 
     // Спрашивать перед очисткой — лишний клик на каждый новый разговор, поэтому
     // чистим сразу, но держим копию: нажатие по уведомлению возвращает ленту.
     // Терять нечего — и предлагать вернуть незачем.
     const undo = this.host.history.length > 0 ? this.snapshot() : null;
+    const gone = this.host.history.slice();
     this.host.history.length = 0;
     this.host.persistHistory();
+    this.forgetSaved(gone);
+    // Картинки нового разговора не переживают: приготовленные для прежнего, они
+    // уехали бы со следующим вопросом — за деньги и без спроса. Фрагмент заметки
+    // остаётся: за ним стоит живое выделение, и о том же куске после «нового
+    // чата» часто спрашивают снова.
+    this.dropFiles();
     if (wasPrivate !== priv) {
       this.host.settings.privateChat = priv;
       void this.host.saveSettings();
-      // Плашка переживает очистку ленты — за ней стоит живое выделение в
-      // заметке, и после «нового чата» о том же куске часто спрашивают снова.
-      // А вот смену режима переживать ей нечего: приватному чату фрагмент
+      // А вот смену режима плашке переживать нечего: приватному чату фрагмент
       // заметки не положен вовсе.
       this.attach(null);
       this.dismissed = null;
@@ -573,7 +667,37 @@ export class ChatView extends ItemView {
     const removed = this.host.history.splice(from, to - from);
     this.host.history.splice(from, 0, ...removed.filter(isActionEntry));
     this.host.persistHistory();
+    this.forgetSaved(removed);
     this.repaint();
+  }
+
+  /**
+   * Снять с плашки все картинки разом и отпустить их из памяти сеанса. В ленту
+   * они не попали, значит вернуть их нечем и незачем.
+   */
+  private dropFiles(): void {
+    if (!this.files.length) return;
+    for (const att of this.files) this.host.attachments.forget(att.id);
+    this.files = [];
+    this.paintAttach();
+  }
+
+  /**
+   * Картинки ушедших реплик — из памяти сеанса вон. Держать их дальше незачем:
+   * после очистки ленты до них не добраться ничем, а весит каждая сотни
+   * килобайт, и за долгий день их набирается на десятки мегабайт.
+   *
+   * Только те, что лежат в хранилище: их вернёт диск, и забывать их ничего не
+   * стоит. Прожившую один сеанс не трогаем, даже когда реплику сняли, — снятие
+   * возвращается нажатием по уведомлению, и картинка должна вернуться с ней.
+   */
+  private forgetSaved(items: HistoryItem[]): void {
+    for (const item of items) {
+      if (isActionEntry(item)) continue;
+      for (const att of item.attachments ?? []) {
+        if (att.path) this.host.attachments.forget(att.id);
+      }
+    }
   }
 
   /** Последняя реплика разговора; записи журнала не в счёт. */
@@ -619,6 +743,9 @@ export class ChatView extends ItemView {
       // Ровно тот фрагмент, о котором спрашивали: подхватывать вместо него то,
       // что выделено в заметке сейчас, — это уже другой вопрос.
       quote: ask.quote ?? null,
+      // И те же картинки: без них «спросить заново» ушло бы вопросом про
+      // изображение, которого в запросе нет.
+      files: ask.attachments ?? null,
       config,
     });
   }
@@ -668,7 +795,10 @@ export class ChatView extends ItemView {
     // ответ, и продолжение идёт по тем же правилам. Оборванный ответ уходит
     // последней репликой — продолжать модель должна свой текст.
     const talk = fresh && ask ? [ask, msg] : contextWindow(history);
-    for (const m of talk) messages.push({ role: m.role, content: messageText(m) });
+    // Картинки во второй раз не возим: дописывают ответ, а не пересматривают
+    // изображение — но и молчать о нём нельзя, иначе вопрос «что тут?» уходит
+    // указывающим в пустоту. Про это messageContent и приписывает строчку.
+    for (const m of talk) messages.push({ role: m.role, content: messageContent(m) });
     messages.push({ role: "user", content: t("chatContinuePrompt") });
 
     const controller = new AbortController();
@@ -779,6 +909,14 @@ export class ChatView extends ItemView {
     this.inputEl.focus();
     // Фрагмент, о котором был вопрос, возвращается на плашку вместе с ним.
     if (msg.quote) this.takeSelection(msg.quote);
+    // И картинки: правят обычно формулировку, а не то, о чём спрашивали. То, что
+    // успели приложить для следующего вопроса, при этом снимается — иначе
+    // вернувшийся вопрос уехал бы наполовину с чужими картинками.
+    this.dropFiles();
+    if (msg.attachments?.length) {
+      this.files = [...msg.attachments];
+      this.paintAttach();
+    }
     // Снялся не только сам вопрос: дальше мог быть разговор на десять реплик,
     // и молча его терять нельзя.
     if (tail > 0) undo(t("chatCutTail"));
@@ -854,31 +992,323 @@ export class ChatView extends ItemView {
 
   private attach(found: { path: string; text: string } | null): void {
     this.attached = found;
-    this.attachEl.empty();
-    if (!found) {
-      this.attachEl.hide();
+    this.paintAttach();
+  }
+
+  /**
+   * Плашка над полем ввода: что уедет вместе с вопросом. Фрагмент заметки
+   * занимает всю строку — он длинный и читается глазами; картинки встают
+   * рядком, каждая своим кусочком.
+   */
+  private paintAttach(): void {
+    const bar = this.attachEl;
+    // Настройки могли записать до того, как панель успела построиться, — как и
+    // с шапкой: сюда приходят в том числе из saveSettings.
+    if (!bar) return;
+    bar.empty();
+    if (!this.attached && this.files.length === 0) {
+      bar.hide();
       return;
     }
-    this.attachEl.show();
+    bar.show();
+    if (this.attached) this.quoteChip(bar, this.attached);
+    for (const att of this.files) this.fileChip(bar, att);
 
-    setIcon(this.attachEl.createSpan({ cls: "ai-attach-icon" }), "text-quote");
+    // Модель, которая картинок не принимает, отвечает на них отказом по
+    // формату. Сказать об этом надо до отправки, а не после: до отказа ещё
+    // надо дописать вопрос и нажать «отправить».
+    if (this.files.length === 0) return;
+    const cfg = this.host.chatConfig();
+    if (imagesAllowed(providerOf(cfg))) return;
+    const warn = bar.createDiv({ cls: "ai-attach-warn" });
+    setIcon(warn.createSpan({ cls: "ai-attach-icon" }), "eye-off");
+    warn.createSpan({ text: t("chatAttachBlind", { model: cfg.model }) });
+    const swap = warn.createEl("button", { cls: "ai-attach-switch", text: t("chatAttachSwitch") });
+    swap.onclick = (e) => this.openModelMenu(e);
+  }
+
+  private quoteChip(bar: HTMLElement, found: { path: string; text: string }): void {
+    const chip = bar.createDiv({ cls: "ai-attach-item ai-attach-quote" });
+    setIcon(chip.createSpan({ cls: "ai-attach-icon" }), "text-quote");
     const preview = found.text.replace(/\s+/g, " ").trim();
-    this.attachEl.createSpan({
+    chip.createSpan({
       cls: "ai-attach-text",
       text: preview.length > 120 ? preview.slice(0, 119) + "…" : preview,
     });
-    this.attachEl.createSpan({
+    chip.createSpan({
       cls: "ai-attach-size",
       text: t("chatAttachSize", { chars: found.text.length }),
     });
 
-    const drop = this.attachEl.createEl("button", { cls: "ai-attach-drop clickable-icon" });
+    const drop = chip.createEl("button", { cls: "ai-attach-drop clickable-icon" });
     setIcon(drop, "x");
     drop.setAttr("aria-label", t("chatAttachDrop"));
     drop.onclick = () => {
       this.dismissed = found.text;
       this.attach(null);
     };
+  }
+
+  private fileChip(bar: HTMLElement, att: Attachment): void {
+    const chip = bar.createDiv({ cls: "ai-attach-item ai-attach-file" });
+    const url = attachmentUrl(this.app, this.host.attachments, att);
+    // Ужатая картинка — единственное, по чему её узнают: имена у снимков экрана
+    // одинаковые, а размер говорит только о цене.
+    if (url) chip.createEl("img", { cls: "ai-attach-thumb", attr: { src: url, alt: att.name } });
+    else setIcon(chip.createSpan({ cls: "ai-attach-icon" }), "image-off");
+    chip.createSpan({ cls: "ai-attach-text", text: att.name });
+    chip.createSpan({ cls: "ai-attach-size", text: humanSize(att.size) });
+
+    const drop = chip.createEl("button", { cls: "ai-attach-drop clickable-icon" });
+    setIcon(drop, "x");
+    drop.setAttr("aria-label", t("chatAttachRemove"));
+    drop.onclick = () => {
+      this.files = this.files.filter((f) => f !== att);
+      // Из памяти сеанса картинку отпускаем: её сняли руками, и второго такого
+      // же вопроса не будет. А вот файл, уже лежащий в хранилище, остаётся на
+      // месте: положили его туда по общему правилу, и снятие вложения — не
+      // повод удалять чужое молча.
+      this.host.attachments.forget(att.id);
+      this.paintAttach();
+    };
+  }
+
+  /** Пункты «откуда взять картинку»: и по правой кнопке на скрепке, и в «ещё». */
+  private addClipItems(menu: Menu): void {
+    menu.addItem((item) =>
+      item
+        .setTitle(t("chatClipVault"))
+        .setIcon("image")
+        .onClick(() => this.pickFromVault()),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle(t("chatClipNote"))
+        .setIcon("file-image")
+        .onClick(() => this.pickFromNote()),
+    );
+  }
+
+  /** Любая картинка хранилища — списком с поиском по имени и папке. */
+  private pickFromVault(): void {
+    const paths = this.app.vault
+      .getFiles()
+      .filter((f) => isImagePath(f.path))
+      .map((f) => f.path)
+      .sort();
+    if (!paths.length) {
+      new Notice(t("chatClipNoImages"));
+      return;
+    }
+    new ImageSuggestModal(this.app, paths, (path) => void this.addFromVault(path)).open();
+  }
+
+  /**
+   * Картинки, встроенные в открытую заметку. Заметка уезжает модели текстом, и
+   * `![[схема.png]]` она видит строчкой, а не изображением: приложить картинку
+   * из-под курсора — самый частый способ спросить «что тут не так».
+   */
+  private pickFromNote(): void {
+    const note = this.host.readNote();
+    const links = note ? embeddedImages(note.text) : [];
+    // Ссылка в заметке короткая — «схема.png»; настоящий путь ищет Obsidian,
+    // он же разбирается с одинаковыми именами в разных папках.
+    const paths: string[] = [];
+    for (const link of links) {
+      const file = this.app.metadataCache.getFirstLinkpathDest(link, note?.path ?? "");
+      if (file instanceof TFile && !paths.includes(file.path)) paths.push(file.path);
+    }
+    if (!paths.length) {
+      new Notice(t("chatClipNoneInNote"));
+      return;
+    }
+    if (paths.length === 1) {
+      void this.addFromVault(paths[0]);
+      return;
+    }
+    new ImageSuggestModal(this.app, paths, (path) => void this.addFromVault(path)).open();
+  }
+
+  /** Перетаскивание в панель: файлы с диска и файлы из проводника Obsidian. */
+  private setupDrop(root: HTMLElement): void {
+    const dragged = (e: DragEvent): boolean =>
+      !!e.dataTransfer && [...e.dataTransfer.types].some((ty) => ty === "Files" || ty === "text/plain");
+
+    this.registerDomEvent(root, "dragover", (e) => {
+      if (!dragged(e)) return;
+      // Без этого браузер откажется отдавать drop, и файл откроется поверх окна.
+      e.preventDefault();
+      root.addClass("is-dropping");
+    });
+    this.registerDomEvent(root, "dragleave", (e) => {
+      // Переход с пузыря на поле ввода — это тоже dragleave, хотя из панели
+      // никто не уходил: смотрим, куда указатель переехал, а не откуда.
+      const to = e.relatedTarget as Node | null;
+      if (!to || !root.contains(to)) root.removeClass("is-dropping");
+    });
+    // Пунктирная рамка говорит «сюда можно», но не говорит, что будет: панель
+    // принимает и текст, и заметки, и картинку — вслух надёжнее.
+    root.createDiv({ cls: "ai-drop-hint", text: t("chatAttachDropHere") });
+
+    this.registerDomEvent(root, "drop", (e) => {
+      root.removeClass("is-dropping");
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      if (files.length) {
+        e.preventDefault();
+        void this.takeFiles(files);
+        return;
+      }
+      // Из проводника Obsidian приезжает не файл, а ссылка на него.
+      const text = e.dataTransfer?.getData("text/plain") ?? "";
+      const link = text.replace(/^!?\[\[|\]\]$/g, "").split("|")[0].trim();
+      if (!link) return;
+      const file =
+        this.app.vault.getAbstractFileByPath(link) ??
+        this.app.metadataCache.getFirstLinkpathDest(link, this.host.targetPath() ?? "");
+      if (file instanceof TFile && isImagePath(file.path)) {
+        e.preventDefault();
+        void this.addFromVault(file.path);
+      }
+    });
+  }
+
+  /**
+   * Взять картинки в чат. Всё лишнее отсекаем молча: в перетащенной пачке
+   * запросто едут и документы, и ругаться на каждый — только мешать.
+   *
+   * fromClipboard — имя придумываем сами: из буфера картинка приезжает
+   * безымянной, и в папке вложений таких «image.png» скопился бы десяток.
+   */
+  private async takeFiles(list: File[], fromClipboard = false): Promise<void> {
+    const images = list.filter(
+      // SVG — не картинка, а разметка: Electron её в холст не кладёт, а модели
+      // такого вложения не принимают вовсе.
+      (f) => f.type !== "image/svg+xml" && (f.type.startsWith("image/") || isImagePath(f.name)),
+    );
+    // Ни одной картинки во всей пачке — тут молчать нельзя: человек принёс файл
+    // и не увидел вообще ничего, а это выглядит как сломанный плагин, а не как
+    // «так нельзя». Лишнее в пачке с картинками по-прежнему отсекаем молча.
+    if (!images.length) {
+      if (list.length) new Notice(t("chatAttachNotImage"));
+      return;
+    }
+    const taken: Attachment[] = [];
+    let failed = 0;
+    for (const file of images) {
+      if (this.files.length >= MAX_FILES) {
+        new Notice(t("chatAttachLimit", { n: MAX_FILES }));
+        break;
+      }
+      const name = fromClipboard ? pastedName(file.type, stamp(new Date())) : file.name;
+      const att = await this.addFile(file, name);
+      if (att) taken.push(att);
+      else failed++;
+    }
+    if (failed) new Notice(t("chatAttachFailed"));
+    // Настройка обещает положить картинку в хранилище, а приватный чат этого
+    // обещания не выполнит никогда — сказать об этом надо сразу, а не после
+    // отправки, когда файла уже ждут в папке вложений.
+    const s = this.host.settings;
+    if (taken.length && s.saveAttachments && s.privateChat) new Notice(t("chatAttachPrivate"));
+    this.paintAttach();
+  }
+
+  /**
+   * Картинки вопроса — в папку вложений хранилища, туда же, куда их кладёт сам
+   * Obsidian при вставке в заметку.
+   *
+   * В момент отправки, а не когда картинку принесли: приложенную и снятую —
+   * передумал, перетащил не то, выбрал не тот файл — хранилище не увидит вовсе.
+   * Уведомление одно на всю пачку: тащат их сразу по нескольку.
+   *
+   * Не вышло положить — вопрос всё равно уходит, но об этом говорим вслух:
+   * иначе человек узнает о потере только после перезапуска, когда повторить
+   * вопрос уже нечем.
+   */
+  private async saveFiles(files: Attachment[]): Promise<void> {
+    const s = this.host.settings;
+    if (!s.saveAttachments || s.privateChat) return;
+    // Картинка из хранилища там уже лежит — класть её второй раз незачем.
+    const fresh = files.filter((a) => !a.path);
+    if (!fresh.length) return;
+
+    const where = this.host.targetPath() ?? "";
+    for (const att of fresh) {
+      const blob = this.host.attachments.get(att.id);
+      const path = blob ? await saveToVault(this.app, blob, att.name, where) : null;
+      if (path) att.path = path;
+    }
+    const saved = fresh.filter((a) => a.path);
+    if (saved.length === 1) new Notice(t("chatAttachSaved", { path: saved[0].path ?? "" }));
+    else if (saved.length > 1) new Notice(t("chatAttachSavedMany", { n: saved.length }));
+    if (saved.length < fresh.length) new Notice(t("chatAttachSaveFailed"));
+  }
+
+  /**
+   * Картинка, принесённая в чат: ужать и показать на плашке. До отправки она
+   * живёт только в памяти сеанса — на диск её кладёт saveFiles, и только если
+   * вопрос действительно уйдёт.
+   */
+  private async addFile(blob: Blob, name: string): Promise<Attachment | null> {
+    let ready: Blob | null;
+    try {
+      ready = await prepareImage(blob);
+    } catch {
+      ready = null;
+    }
+    if (!ready) return null;
+    const att: Attachment = {
+      id: newId(),
+      name,
+      mime: ready.type || blob.type || "image/png",
+      size: ready.size,
+    };
+    this.host.attachments.put(att.id, ready);
+
+    this.files.push(att);
+    return att;
+  }
+
+  /** Картинка из хранилища: она там уже лежит, класть её второй раз незачем. */
+  private async addFromVault(path: string): Promise<void> {
+    if (this.files.length >= MAX_FILES) {
+      new Notice(t("chatAttachLimit", { n: MAX_FILES }));
+      return;
+    }
+    const raw = await vaultBlob(this.app, path);
+    const ready = raw ? await prepareImage(raw) : null;
+    if (!ready) {
+      new Notice(t("chatAttachFailed"));
+      return;
+    }
+    const att: Attachment = {
+      id: newId(),
+      name: path.split("/").pop() ?? path,
+      mime: ready.type || mimeOf(path),
+      size: ready.size,
+      path,
+    };
+    this.host.attachments.put(att.id, ready);
+    this.files.push(att);
+    this.paintAttach();
+  }
+
+  /**
+   * Картинки вложений адресами data: — тем, что уедет модели. Пропавшую (файл
+   * удалили, а память сеанса не пережила перезапуск) пропускаем и говорим об
+   * этом вслух: вопрос про картинку, которой нет, лучше задать зряче.
+   */
+  private async imagesFor(files: Attachment[]): Promise<string[]> {
+    const out: string[] = [];
+    let gone = 0;
+    for (const att of files) {
+      const data = await attachmentData(this.app, this.host.attachments, att);
+      if (data) out.push(data);
+      else gone++;
+    }
+    // Пропали обычно все разом — их и не пережил один и тот же перезапуск.
+    if (gone) new Notice(t("chatAttachGone"));
+    return out;
   }
 
   private autoGrow(): void {
@@ -936,8 +1366,9 @@ export class ChatView extends ItemView {
 
   private async send(): Promise<void> {
     const text = this.inputEl.value.trim();
-    if (!text) return;
-    this.rememberAsk(text);
+    // Одна картинка без слов — тоже вопрос: «что здесь?» модель понимает и так.
+    if (!text && this.files.length === 0) return;
+    if (text) this.rememberAsk(text);
     this.inputEl.value = "";
     this.autoGrow();
     this.saveDraft();
@@ -962,11 +1393,23 @@ export class ChatView extends ItemView {
     // всего, что могло уцелеть от прошлого разговора.
     const asked = opts.quote === undefined ? this.attached?.text : opts.quote;
     const quote = (this.host.settings.privateChat ? null : asked) ?? undefined;
+    // Картинки уходят с этим вопросом и снимаются с плашки — как фрагмент.
+    // Приватности они не касаются: картинку приносят в чат руками, и это уже
+    // сказанное «отправь», а не подхваченное само собой из заметки.
+    //
+    // Действие из заметки плашку не смотрит вовсе и картинок с неё не забирает:
+    // приложенная для следующего вопроса, она уехала бы с чужим запросом — за
+    // те же деньги и без спроса.
+    const files = (opts.files === undefined ? (opts.fromEditor ? [] : this.files) : opts.files) ?? [];
+    if (!opts.fromEditor) this.files = [];
     this.attach(null);
     // Про этот кусок уже спросили, и он остался в ленте. Выделение в заметке
     // никуда не делось — без этого плашка тут же вернулась бы, и фрагмент уехал
     // бы вторым разом за те же деньги.
     if (quote) this.dismissed = quote;
+    // Вопрос уходит — значит картинкам пора на диск, если так велено настройкой.
+    // Путь проставляется до того, как реплика ляжет в ленту: он в ней и хранится.
+    await this.saveFiles(files);
 
     // Реплику держим объектом: по нему кнопки под сообщением находят своё место
     // в ленте, как бы она ни менялась под ними.
@@ -974,6 +1417,7 @@ export class ChatView extends ItemView {
       role: "user",
       content: opts.display ?? text,
       quote,
+      attachments: files.length ? files : undefined,
       // Показано не то, что уходит в запрос, — запоминаем настоящий вопрос
       // вместе с его системным промптом, иначе «спросить заново» отправит
       // подпись действия.
@@ -1036,11 +1480,26 @@ export class ChatView extends ItemView {
 
     if (!opts.fresh) {
       // История без последней реплики — её кладём отдельно, уже настоящим текстом.
-      for (const m of contextWindow(this.host.history.slice(0, -1))) {
-        messages.push({ role: m.role, content: messageText(m) });
+      const past = contextWindow(this.host.history.slice(0, -1));
+      // Из прошлых реплик картинки уходят только с самой свежей: за каждую
+      // платят на каждом вопросе, и разговор, начавшийся с фотографии, иначе
+      // возил бы её с собой до конца. Про остальные модели говорят словами —
+      // иначе разговор выглядит как вопросы о пустоте.
+      // К этому вопросу приложили своё — прежние картинки не нужны и подавно:
+      // спрашивают уже про новую.
+      const lastWithFiles = files.length
+        ? -1
+        : past.reduce((at, m, i) => (m.attachments?.length ? i : at), -1);
+      for (const [i, m] of past.entries()) {
+        const seen = i === lastWithFiles ? await this.imagesFor(m.attachments ?? []) : [];
+        messages.push({ role: m.role, content: messageContent(m, seen) });
       }
     }
-    messages.push({ role: "user", content: messageText({ role: "user", content: text, quote }) });
+    const images = await this.imagesFor(files);
+    messages.push({
+      role: "user",
+      content: messageContent({ role: "user", content: text, quote, attachments: files }, images),
+    });
 
     // Локальная ссылка: stop() обнуляет this.controller, а в catch ещё нужно
     // знать, оборвали запрос или он упал сам.
@@ -1207,9 +1666,11 @@ export class ChatView extends ItemView {
             this.host.persistHistory();
             this.repaint();
           }
-          // Фрагмент задаём явно: плашку сняли ещё в начале захода, и без этого
-          // повтор уходил без куска заметки — молча и за те же деньги.
-          void this.submit(text, { ...opts, quote: quote ?? null });
+          // Фрагмент и картинки задаём явно: плашку сняли ещё в начале захода, и
+          // без этого повтор уходил без куска заметки — молча и за те же деньги.
+          // С картинками хуже вдвое: пока ошибка висела на экране, на плашку
+          // могли положить новые — и повтор уехал бы с чужими вместо своих.
+          void this.submit(text, { ...opts, quote: quote ?? null, files });
         };
       }
     } finally {
@@ -1544,12 +2005,41 @@ export class ChatView extends ItemView {
       details.createEl("summary", { text: t("chatAttached", { chars: quote.length }) });
       details.createDiv({ cls: "ai-msg-quote-body", text: quote });
     }
+    // Картинки — над вопросом, как и фрагмент: разговор, в котором не видно, о
+    // чём спрашивали, через день не восстановить.
+    if (msg?.attachments?.length) this.addThumbs(el, msg.attachments);
     const body = el.createDiv({ cls: "ai-msg-body" });
     if (text) body.setText(text);
     // У ответа кнопки в общем подвале, а у вопроса свой: он и рисуется сразу,
     // и ждать в нём нечего.
     if (msg && role === "user") this.askFooter(el, msg);
     return el;
+  }
+
+  /**
+   * Картинки под репликой в ленте. Файл хранилища открывается щелчком — так же,
+   * как из заметки; картинка из памяти сеанса никуда не ведёт, открывать нечего.
+   * Не нашлась вовсе — на её месте честная надпись, а не пустая рамка.
+   */
+  private addThumbs(el: HTMLElement, files: Attachment[]): void {
+    const row = el.createDiv({ cls: "ai-msg-files" });
+    for (const att of files) {
+      const url = attachmentUrl(this.app, this.host.attachments, att);
+      if (!url) {
+        row.createDiv({ cls: "ai-msg-file-gone", text: t("chatAttachGone") });
+        continue;
+      }
+      const img = row.createEl("img", {
+        cls: "ai-msg-file",
+        attr: { src: url, alt: att.name, title: att.path ?? att.name },
+      });
+      if (!att.path) continue;
+      img.addClass("is-clickable");
+      img.onclick = () => {
+        const file = this.app.vault.getAbstractFileByPath(att.path ?? "");
+        if (file instanceof TFile) void this.app.workspace.getLeaf("tab").openFile(file);
+      };
+    }
   }
 
   /**

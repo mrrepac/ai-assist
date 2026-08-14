@@ -139,8 +139,9 @@ export function toolSpecs(): ToolSpec[] {
       function: {
         name: "create_note",
         description:
-          "Create a new note in the vault root. Use it only when the user asks for a separate " +
-          "note; to write into the note they already have open use insert_text.",
+          "Create a new note in the vault. The user decides which folder it lands in, so do not " +
+          "promise a location. Use it only when the user asks for a separate note; to write into " +
+          "the note they already have open use insert_text.",
         parameters: {
           type: "object",
           properties: {

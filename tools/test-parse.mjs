@@ -18,7 +18,8 @@ const obsidianStub = {
     build.onResolve({ filter: /^obsidian$/ }, (args) => ({ path: args.path, namespace: "obsidian-stub" }));
     build.onLoad({ filter: /.*/, namespace: "obsidian-stub" }, () => ({
       contents: `export const moment = { locale: () => "en" };
-                 export const requestUrl = async () => { throw new Error("not in tests"); };`,
+                 export const requestUrl = async () => { throw new Error("not in tests"); };
+                 export class TFile {}`,
       loader: "js",
     }));
   },
@@ -39,7 +40,8 @@ async function load(entry, name) {
 
 const { drainSse, endpoint, collectToolCalls, isLocalUrl, readSources } = await load("src/api.ts", "api");
 const { cleanReply, offsetAt, sectionAt, sectionName } = await load("src/actions.ts", "actions");
-const { contextWindow, messageText } = await load("src/history.ts", "history");
+const { contextWindow, messageText, messageContent } = await load("src/history.ts", "history");
+const { fitSize, isImagePath, embeddedImages, pastedName, stamp, humanSize, AttachmentStore } = await load("src/attach.ts", "attach");
 const { mergeSettings, providerOf, streamAvailable, streamAllowed, configFor, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank, toolsAllowed, builtinModels, activeConfig } = await load("src/types.ts", "types");
 const { chatToMarkdown } = await load("src/chatnote.ts", "chatnote");
 const { stripCitations } = await load("src/cite.ts", "cite");
@@ -1089,6 +1091,79 @@ const withQuote = chatToMarkdown([{ role: "user", content: "а покороче?
 check("фрагмент попадает в сохранённую заметку", withQuote.includes("> исходный кусок"), true);
 // Тесты идут на английской локали — заглушка moment отдаёт "en".
 check("вопрос о фрагменте подписан", withQuote.includes("About the fragment:"), true);
+
+// ——— вложения ———
+// Картинку надо ужать до отправки: фотография с телефона в исходном виде — это
+// мегабайты base64 и заметная строчка в счёте, а читается на ней ровно то же.
+check("большая сторона подгоняется под предел", fitSize(4000, 3000, 1200), { w: 1200, h: 900 });
+check("высокая картинка считается по высоте", fitSize(600, 2400, 1200), { w: 300, h: 1200 });
+check("маленькую не растягиваем", fitSize(320, 200, 1200), { w: 320, h: 200 });
+check("ровно по пределу — не трогаем", fitSize(1200, 800, 1200), { w: 1200, h: 800 });
+// Полоска в один пиксель после деления не должна превратиться в ноль: картинка
+// нулевой ширины не нарисуется вовсе.
+check("узкая полоска не схлопывается в ноль", fitSize(4000, 3, 1200).h, 1);
+
+check("картинка узнаётся по расширению", isImagePath("Вложения/Снимок.PNG"), true);
+check("заметка картинкой не считается", isImagePath("Дневник/сегодня.md"), false);
+check("файл без точки не картинка", isImagePath("README"), false);
+
+// Встроенные в заметку картинки: она уезжает модели текстом, и `![[схема.png]]`
+// та видит строчкой, а не изображением.
+const note = "Текст\n![[схема.png]]\nещё\n![подпись](Вложения/фото%20с%20дачи.jpg)\n![[заметка.md]]\n![](https://site/pic.png)";
+check("внутренняя ссылка на картинку находится", embeddedImages(note).includes("схема.png"), true);
+check("markdown-ссылка тоже находится", embeddedImages(note).includes("Вложения/фото с дачи.jpg"), true);
+check("встроенная заметка картинкой не считается", embeddedImages(note).includes("заметка.md"), false);
+check("картинка из интернета не вложение", embeddedImages(note).some((p) => p.startsWith("http")), false);
+check("повтор не задваивается", embeddedImages("![[один.png]] ![[один.png]]").length, 1);
+check("размер по ширине блока", embeddedImages("![[схема.png|400]]").length, 1);
+
+check("отметка времени без двоеточий", stamp(new Date(2026, 7, 7, 4, 5, 6)), "20260807040506");
+check("имя вставленной картинки с расширением", pastedName("image/png", "20260807040506").endsWith(".png"), true);
+check("jpeg получает привычное расширение", pastedName("image/jpeg", "1").endsWith(".jpg"), true);
+check("неизвестный формат зовём png", pastedName("image/heic", "1").endsWith(".png"), true);
+check("вес считается килобайтами", humanSize(12 * 1024), "12 KB");
+check("вес крупной картинки — мегабайтами", humanSize(3 * 1024 * 1024), "3.0 MB");
+
+// Реплика без картинок уходит прежней строкой: массив кусков понимают не все
+// модели, и городить его на каждый вопрос ни за чем нельзя.
+check("вопрос без картинок остаётся строкой", messageContent({ role: "user", content: "привет" }), "привет");
+const withImage = messageContent({ role: "user", content: "что тут?" }, ["data:image/png;base64,AAA"]);
+check("картинка едет отдельным куском", withImage.map((p) => p.type), ["text", "image_url"]);
+check("текст вопроса идёт первым", withImage[0].text, "что тут?");
+check("адрес картинки уходит как есть", withImage[1].image_url.url, "data:image/png;base64,AAA");
+// Старую картинку в каждый следующий запрос не возим — но и молчать о ней
+// нельзя: иначе разговор выглядит как вопросы о пустоте.
+const dropped = messageContent({ role: "user", content: "что тут?", attachments: [{ id: "1", name: "a.png", mime: "image/png", size: 10 }] });
+check("про снятую картинку модель предупреждена", dropped.includes("An image was attached"), true);
+check("вопрос при этом на месте", dropped.startsWith("что тут?"), true);
+
+// Сохранённый разговор: картинка из хранилища встаёт ссылкой, а прожившая
+// только сеанс — оговоркой, иначе заметка ссылалась бы в никуда.
+const shots = chatToMarkdown(
+  [{ role: "user", content: "что тут?", attachments: [{ id: "1", name: "a.png", mime: "image/png", size: 10, path: "Вложения/a.png" }] }],
+  "м",
+  "д",
+);
+check("картинка хранилища попадает в заметку ссылкой", shots.includes("![[Вложения/a.png]]"), true);
+const kept = chatToMarkdown(
+  [{ role: "user", content: "", attachments: [{ id: "2", name: "b.png", mime: "image/png", size: 10 }] }],
+  "м",
+  "д",
+);
+check("вопрос из одной картинки не пропадает", kept.includes("not saved to the vault"), true);
+
+// Память сеанса: картинка весит сотни килобайт, и держать её после того, как
+// она ушла из разговора, — это мегабайты, до которых уже никак не добраться.
+const store = new AttachmentStore();
+const shot = new Blob(["картинка"], { type: "image/png" });
+store.put("a", shot);
+store.put("b", shot);
+check("вложение находится по id", store.get("a") === shot, true);
+store.forget("a");
+check("забытое вложение больше не отдаётся", store.get("a"), null);
+check("соседнее при этом на месте", store.get("b") === shot, true);
+store.clear();
+check("выгрузка отпускает всё", store.get("b"), null);
 
 console.log(`\n${pass} прошло, ${fail} упало`);
 process.exit(fail ? 1 : 0);
