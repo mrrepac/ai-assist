@@ -162,13 +162,16 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
    * иначе вторая машина потеряет своё после первого сохранения здесь.
    */
   private rest: Record<string, unknown> = {};
+  /** Вкладка настроек: её надо перерисовать, если файл переписали снаружи. */
+  private settingTab: AiAssistSettingTab | null = null;
 
   async onload(): Promise<void> {
     await this.loadStore();
 
     this.registerView(VIEW_TYPE_CHAT, (leaf: WorkspaceLeaf) => new ChatView(leaf, this));
     this.addRibbonIcon("bot-message-square", t("chatTitle"), () => this.showChat());
-    this.addSettingTab(new AiAssistSettingTab(this.app, this));
+    this.settingTab = new AiAssistSettingTab(this.app, this);
+    this.addSettingTab(this.settingTab);
 
     if (!Platform.isMobile) {
       this.statusEl = this.addStatusBarItem();
@@ -516,6 +519,43 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       this.settingsTimer = null;
       void this.saveData(writeStore(this.settings, this.rest));
     }, 1000);
+  }
+
+  /**
+   * Файл настроек переписан снаружи — обычно синхрой со второй машины.
+   * Obsidian зовёт этот хук, только если файл на диске новее прочитанного
+   * нами, значит привезённое новее того, что лежит в памяти, и побеждает оно.
+   * Без хука картина была обратной: плагин держал своё старое, а ближайшее
+   * сохранение клало его поверх нового — а взводится оно на каждую букву
+   * черновика.
+   *
+   * Ленту не трогаем нарочно. Во-первых, history.json синхра не возит: в её
+   * списке файлов плагина только manifest.json, main.js, styles.css и
+   * data.json. Во-вторых, loadStore при включённом «начинать с пустого чата»
+   * чистит историю — и привезённые настройки снесли бы живой разговор.
+   */
+  async onExternalSettingsChange(): Promise<void> {
+    // Взведённую запись гасим, не сбрасывая на диск: она затоптала бы то, что
+    // мы прямо сейчас собираемся прочитать.
+    if (this.settingsTimer !== null) {
+      window.clearTimeout(this.settingsTimer);
+      this.settingsTimer = null;
+    }
+    const read = readStore(await this.loadData());
+    // Разбирать нечего — своё в памяти целее того, что на диске.
+    if (read.state === "broken") return;
+
+    // Черновик вопроса — про эту машину и эту секунду, чужой ему не указ.
+    const draft = this.settings.draft;
+    this.settings = read.settings;
+    this.settings.draft = draft;
+    this.rest = read.rest;
+
+    // Действия могли поменяться: у каждого своя команда с хоткеем.
+    this.registerActionCommands();
+    this.chatView?.refreshHeader();
+    // Открытая вкладка настроек показывала бы прежние значения.
+    if (this.settingTab?.containerEl.childElementCount) this.settingTab.display();
   }
 
   /** История меняется часто — пишем на диск не чаще раза в секунду. */
