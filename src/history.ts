@@ -117,3 +117,12 @@ export function contextWindow(
   }
   return out.reverse();
 }
+
+/**
+ * Лента без разговора: остаются одни записи журнала правок. В их карточках
+ * живёт кнопка «Отменить правку», поэтому чистка разговора их не касается —
+ * то же правило, по которому работает обрезка ленты кнопками под сообщениями.
+ */
+export function dropTalk(history: HistoryItem[]): HistoryItem[] {
+  return history.filter(isActionEntry);
+}

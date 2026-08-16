@@ -40,7 +40,7 @@ async function load(entry, name) {
 
 const { drainSse, endpoint, collectToolCalls, isLocalUrl, readSources, addUsage, describeError } = await load("src/api.ts", "api");
 const { cleanReply, offsetAt, sectionAt, sectionName } = await load("src/actions.ts", "actions");
-const { contextWindow, messageText, messageContent, docBlock, clipNote } = await load("src/history.ts", "history");
+const { contextWindow, messageText, messageContent, docBlock, clipNote, dropTalk } = await load("src/history.ts", "history");
 const { fitSize, isImagePath, isAttachablePath, embeddedFiles, pastedName, stamp, humanSize, AttachmentStore } = await load("src/attach.ts", "attach");
 const { isPdfPath, joinItems, tidy, clipPages } = await load("src/pdf.ts", "pdf");
 const { mergeSettings, providerOf, streamAvailable, streamAllowed, configFor, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank, toolsAllowed, builtinModels, activeConfig } = await load("src/types.ts", "types");
@@ -1285,6 +1285,20 @@ check("короткая заметка не режется", clipNote("коро�
 check("ровно по пределу — ещё не обрезка", clipNote("абвг", 4).clipped, false);
 check("длинная берётся началом", clipNote("абвгд", 3), { text: "абв", clipped: true });
 
+// ——— dropTalk ———
+const logEntry = { kind: "action", id: "1", action: "Исправить орфографию", status: "done", content: "" };
+const secondLog = { kind: "action", id: "2", action: "Сократить", status: "done", content: "" };
+const askItem = { role: "user", content: "привет" };
+const replyItem = { role: "assistant", content: "ага" };
+check("разговор снят, журнал остался", dropTalk([askItem, logEntry, replyItem]), [logEntry]);
+check("одни записи журнала — чистить нечего", dropTalk([logEntry]), [logEntry]);
+check("пустая лента остаётся пустой", dropTalk([]), []);
+check(
+  "порядок записей журнала не меняется",
+  dropTalk([logEntry, askItem, secondLog]).map((item) => item.id),
+  ["1", "2"],
+);
+
 // ——— расход за несколько заходов ———
 // Длинный ответ модель отдаёт в два-три приёма, и каждый оплачен. Показать
 // только последний — назвать цену меньше настоящей: именно так терялся самый
@@ -1331,6 +1345,8 @@ check(
   "keep",
 );
 check("массив вместо настроек — битый", readStore({ settings: [1, 2, 3] }).state, "broken");
+check("настройки не объектом — битый", readStore({ settings: null }).state, "broken");
+check("настройки строкой — битый", readStore({ settings: "текст" }).state, "broken");
 
 // ——— store: history.json ———
 // Своё имя, не talk — оно уже занято блоком «разговор в заметку» выше.
