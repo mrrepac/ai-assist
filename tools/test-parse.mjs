@@ -45,6 +45,7 @@ const { fitSize, isImagePath, isAttachablePath, embeddedFiles, pastedName, stamp
 const { isPdfPath, joinItems, tidy, clipPages } = await load("src/pdf.ts", "pdf");
 const { mergeSettings, providerOf, streamAvailable, streamAllowed, configFor, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank, toolsAllowed, builtinModels, activeConfig } = await load("src/types.ts", "types");
 const { chatToMarkdown } = await load("src/chatnote.ts", "chatnote");
+const { SCHEMA, readStore, writeStore } = await load("src/store.ts", "store");
 const { stripCitations } = await load("src/cite.ts", "cite");
 const { parseCall, runCall } = await load("src/tools.ts", "tools");
 const { diffWords } = await load("src/diff.ts", "diff");
@@ -1299,6 +1300,36 @@ check("слагаемое не портится", (() => {
   addUsage(first, spent(1, 1, 1));
   return first;
 })(), spent(10, 5, 2));
+
+// ——— store: data.json ———
+check("файла нет — это первый запуск", readStore(null).state, "fresh");
+check("Obsidian не разобрал файл — битый", readStore(undefined).state, "broken");
+check("строка вместо объекта — битый", readStore("настройки").state, "broken");
+check("массив вместо объекта — битый", readStore([1, 2]).state, "broken");
+check("номер формата без настроек — битый", readStore({ schemaVersion: 1 }).state, "broken");
+check("пустой объект — старый формат, настройки в корне", readStore({}).state, "ok");
+check("настройки в корне читаются", readStore({ temperature: 0.5 }).settings.temperature, 0.5);
+check("настройки в обёртке читаются", readStore({ settings: { temperature: 0.5 } }).settings.temperature, 0.5);
+check("файл без номера — версия 0, читается", readStore({ settings: {} }).state, "ok");
+check("нынешний номер", readStore({ schemaVersion: SCHEMA, settings: {} }).state, "ok");
+check("номер больше нашего — файл из будущего", readStore({ schemaVersion: SCHEMA + 1, settings: {} }).state, "ahead");
+check(
+  "лента из старого data.json достаётся",
+  readStore({ settings: {}, history: [{ role: "user", content: "x" }] }).legacy,
+  [{ role: "user", content: "x" }],
+);
+check("своя версия пишется всегда", writeStore(readStore(null).settings).schemaVersion, SCHEMA);
+check("настройки в корне не тащат себя на верхний уровень", readStore({ temperature: 0.5 }).rest, {});
+check("лента на верхнем уровне не остаётся", readStore({ settings: {}, history: [] }).rest, {});
+check("чужое поле верхнего уровня переживает круг", (() => {
+  const read = readStore({ schemaVersion: SCHEMA + 1, settings: {}, archive: [7] });
+  return writeStore(read.settings, read.rest).archive;
+})(), [7]);
+check(
+  "чужое поле внутри настроек переживает круг",
+  readStore({ schemaVersion: SCHEMA + 1, settings: { futureThing: "keep" } }).settings.futureThing,
+  "keep",
+);
 
 console.log(`\n${pass} прошло, ${fail} упало`);
 process.exit(fail ? 1 : 0);

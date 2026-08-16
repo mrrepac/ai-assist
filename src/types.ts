@@ -239,10 +239,22 @@ export function isActionEntry(item: HistoryItem): item is ActionEntry {
  * Что лежит в data.json. Лента переехала в свой history.json — она меняется на
  * каждое слово, а data.json переписывается целиком вместе с настройками. Поле
  * history осталось лишь для настроек прежних версий: прочитали — и перенесли.
+ *
+ * Верхний уровень открыт нарочно: поле, которого мы не знаем, написала версия
+ * новее нашей, и записать его обратно нетронутым дешевле, чем потерять.
  */
 export interface StoredData {
+  /** Номер формата. Файл прежних версий его не имеет — это версия 0. */
+  schemaVersion?: number;
   settings: AiAssistSettings;
   history?: HistoryItem[];
+  [key: string]: unknown;
+}
+
+/** Что лежит в history.json. Голый массив без обёртки — формат версии 0. */
+export interface StoredHistory {
+  schemaVersion: number;
+  items: HistoryItem[];
 }
 
 /** С какой модели DeepSeek начинать: подсказка в настройках и умолчание. */
