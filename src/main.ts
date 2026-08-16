@@ -32,6 +32,7 @@ import { askConfirm } from "./modals";
 import { QuickMenu, QuickScope, RECENT_LIMIT } from "./quickmenu";
 import { ReplaceResult } from "./tools";
 import { AiAssistSettingTab } from "./settings";
+import { readHistory, readStore, writeHistoryFile, writeStore } from "./store";
 import {
   ActionEntry,
   AiAssistSettings,
@@ -39,11 +40,9 @@ import {
   HistoryItem,
   QUICK_ASK,
   StoredChatMessage,
-  StoredData,
   activeConfig,
   configFor,
   isActionEntry,
-  mergeSettings,
   panelConfig,
   providerLabel,
   providerOf,
@@ -157,6 +156,12 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   private saveTimer: number | null = null;
   private settingsTimer: number | null = null;
   private lastRun: AiAction | null = null;
+  /**
+   * Поля верхнего уровня data.json, которых мы не знаем: их написала версия
+   * новее нашей. Держим их при себе и возвращаем в файл при каждой записи —
+   * иначе вторая машина потеряет своё после первого сохранения здесь.
+   */
+  private rest: Record<string, unknown> = {};
 
   async onload(): Promise<void> {
     await this.loadStore();
@@ -272,7 +277,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     if (this.settingsTimer !== null) {
       window.clearTimeout(this.settingsTimer);
       this.settingsTimer = null;
-      void this.saveData({ settings: this.settings });
+      void this.saveData(writeStore(this.settings, this.rest));
     }
   }
 
@@ -346,8 +351,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     if (!path) return Array.isArray(stored) ? stored.slice(-HISTORY_LIMIT) : [];
     try {
       if (await this.app.vault.adapter.exists(path)) {
-        const raw = JSON.parse(await this.app.vault.adapter.read(path)) as unknown;
-        return Array.isArray(raw) ? (raw as HistoryItem[]) : [];
+        return readHistory(JSON.parse(await this.app.vault.adapter.read(path))).items;
       }
     } catch {
       // Файл побился — лента не то, ради чего стоит падать при загрузке.
@@ -356,7 +360,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     if (!Array.isArray(stored) || stored.length === 0) return [];
     const history = stored.slice(-HISTORY_LIMIT);
     await this.writeHistory(history);
-    await this.saveData({ settings: this.settings });
+    await this.saveData(writeStore(this.settings, this.rest));
     return history;
   }
 
@@ -364,16 +368,17 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     const path = this.historyPath();
     if (!path) return;
     try {
-      await this.app.vault.adapter.write(path, JSON.stringify(history));
+      await this.app.vault.adapter.write(path, JSON.stringify(writeHistoryFile(history)));
     } catch (e) {
       console.error("ai-assist: не удалось записать историю", e);
     }
   }
 
   private async loadStore(): Promise<void> {
-    const raw = (await this.loadData()) as Partial<StoredData> | null;
-    this.settings = mergeSettings(raw?.settings ?? raw);
-    this.history = (await this.loadHistory(raw?.history)).slice(-HISTORY_LIMIT);
+    const read = readStore(await this.loadData());
+    this.settings = read.settings;
+    this.rest = read.rest;
+    this.history = (await this.loadHistory(read.legacy)).slice(-HISTORY_LIMIT);
 
     // Вчерашний разговор не подхватываем: Obsidian открывается с чистой лентой.
     // Что стоило сохранить — уходит в заметку кнопкой в шапке панели.
@@ -461,7 +466,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       window.clearTimeout(this.settingsTimer);
       this.settingsTimer = null;
     }
-    await this.saveData({ settings: this.settings });
+    await this.saveData(writeStore(this.settings, this.rest));
     this.registerActionCommands();
     this.chatView?.refreshHeader();
   }
@@ -474,7 +479,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     if (this.settingsTimer !== null) window.clearTimeout(this.settingsTimer);
     this.settingsTimer = window.setTimeout(() => {
       this.settingsTimer = null;
-      void this.saveData({ settings: this.settings });
+      void this.saveData(writeStore(this.settings, this.rest));
     }, 1000);
   }
 
