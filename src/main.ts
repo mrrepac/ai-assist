@@ -555,7 +555,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     this.registerActionCommands();
     this.chatView?.refreshHeader();
     // Открытая вкладка настроек показывала бы прежние значения.
-    if (this.settingTab?.containerEl.childElementCount) this.settingTab.display();
+    if (this.settingTab?.containerEl.isShown()) this.settingTab.display();
   }
 
   /** История меняется часто — пишем на диск не чаще раза в секунду. */
@@ -722,6 +722,9 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
 
     if (action.mode === "chat") {
       const chatView = await this.openChat();
+      // Действие из заметки само себе контекст: прежний разговор ему не нужен,
+      // а платить за него пришлось бы на каждом следующем вопросе.
+      chatView.freshTalk();
       await chatView.submit(sel.text, {
         display: `**${action.name}**\n\n${sel.text}`,
         system,
@@ -1274,6 +1277,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     const sel = ready ? await this.confirmSize(ready) : await this.grabConfirmed(editor);
     if (!sel) return;
     const chatView = await this.openChat();
+    chatView.freshTalk();
     chatView.takeSelection(sel.text);
     chatView.focusInput();
   }

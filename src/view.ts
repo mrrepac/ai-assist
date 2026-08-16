@@ -28,7 +28,7 @@ import {
 } from "./attach";
 import { stripCitations } from "./cite";
 import { DiffResult, diffWords } from "./diff";
-import { AttachedDoc, clipNote, contextWindow, messageContent, messageText } from "./history";
+import { AttachedDoc, clipNote, contextWindow, dropTalk, messageContent, messageText } from "./history";
 import { isPdfPath, pdfText } from "./pdf";
 import { t } from "./i18n";
 import { ImageSuggestModal, ModelSuggestModal } from "./modals";
@@ -659,6 +659,29 @@ export class ChatView extends ItemView {
     // Смену режима видно по шапке, а вот исчезнувший разговор — нет.
     if (undo) undo(priv ? t("chatPrivateStarted") : t("chatCleared"));
     else if (priv) new Notice(t("chatPrivateStarted"));
+  }
+
+  /**
+   * Разговор с чистого листа перед запуском из заметки. Сам запрос прошлое и
+   * так не тащит, но ответ ложится в ленту — и следующий вопрос, набранный уже
+   * в панели, увозит с собой всё накопленное.
+   *
+   * Записи журнала правок остаются: в их карточках живёт кнопка «Отменить
+   * правку», и стереть их значит отобрать возврат. Плашку не трогаем — фрагмент
+   * вешает сам вызывающий, а картинки на ней не разговор.
+   */
+  freshTalk(): void {
+    if (!this.host.settings.freshOnAction) return;
+    // Живой запрос: его ответ пришёл бы в пустую ленту и повис без вопроса.
+    if (this.controller) return;
+    const history = this.host.history;
+    // Разговора нет — и говорить не о чем: уведомление на пустом месте
+    // раздражало бы на каждом нажатии клавиши.
+    if (dropTalk(history).length === history.length) return;
+
+    const undo = this.snapshot();
+    this.cut(0, history.length);
+    undo(t("chatFreshStarted"));
   }
 
   // ——————————————————————— правка ленты ———————————————————————

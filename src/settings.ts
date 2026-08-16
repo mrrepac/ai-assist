@@ -550,6 +550,16 @@ export class AiAssistSettingTab extends PluginSettingTab {
         }),
       );
 
+    new Setting(containerEl)
+      .setName(t("setFreshAction"))
+      .setDesc(t("setFreshActionDesc"))
+      .addToggle((c) =>
+        c.setValue(s.freshOnAction).onChange(async (v) => {
+          s.freshOnAction = v;
+          await this.save();
+        }),
+      );
+
     // Выбирать не из чего, пока настроен один провайдер, — строка стояла бы
     // с единственным пунктом и только спрашивала бы, зачем она.
     const ready = Object.entries(s.profiles)
