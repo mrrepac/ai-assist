@@ -337,11 +337,18 @@ function body(cfg: ApiConfig, messages: ChatMessage[], opts: ChatOptions): strin
  * withImages — в запросе были картинки: тогда отказ по формату почти наверняка
  * про них, и сказать это надо прямо.
  */
-function describeError(status: number, raw: string, withImages = false): ApiError {
+export function describeError(status: number, raw: string, withImages = false): ApiError {
   let detail = "";
   try {
-    const parsed = JSON.parse(raw) as { error?: { message?: string }; message?: string } | null;
-    detail = parsed?.error?.message ?? parsed?.message ?? "";
+    const parsed = JSON.parse(raw) as
+      | { error?: { message?: string } | string; message?: string }
+      | null;
+    // У OpenAI в `error` лежит объект с полем message, но так не у всех. LM Studio
+    // отвечает объектом на «нет такой модели» и голой строкой на всё остальное —
+    // и вся её объяснительная часть пропадала, оставляя человека наедине с
+    // «провайдер отклонил запрос». Текст ошибки — самое ценное, что есть в отказе.
+    const wire = parsed?.error;
+    detail = (typeof wire === "string" ? wire : wire?.message) ?? parsed?.message ?? "";
   } catch {
     detail = raw.slice(0, 300);
   }
@@ -363,11 +370,17 @@ function describeError(status: number, raw: string, withImages = false): ApiErro
   // без подсказки это выглядит как поломка плагина, а не как «эта не умеет».
   // Смотрим не только на текст отказа: провайдеры описывают его кто как, а вот
   // то, что картинка в запросе была, известно наверняка.
-  const hint = /tool|function[ _-]?call/i.test(detail)
-    ? " " + t("errTools")
-    : withImages && status >= 400 && status < 500
-      ? " " + t("errImages")
-      : "";
+  // Локальный сервер грузит модель с тем контекстом, который ему задали при
+  // загрузке, а не с тем, который модель умеет: у модели на 262 тысячи токенов
+  // окно запросто оказывается восьмитысячным. Сам сервер объясняет это по-
+  // английски и в терминах n_ctx — говорим то же самое словами и по-русски.
+  const hint = /n_ctx|context (length|size|window)/i.test(detail)
+    ? " " + t("errContext")
+    : /tool|function[ _-]?call/i.test(detail)
+      ? " " + t("errTools")
+      : withImages && status >= 400 && status < 500
+        ? " " + t("errImages")
+        : "";
   return new ApiError((detail ? `${head} — ${detail}` : head) + hint, status);
 }
 

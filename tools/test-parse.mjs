@@ -38,7 +38,7 @@ async function load(entry, name) {
   return import("file:///" + outfile.replace(/\\/g, "/"));
 }
 
-const { drainSse, endpoint, collectToolCalls, isLocalUrl, readSources, addUsage } = await load("src/api.ts", "api");
+const { drainSse, endpoint, collectToolCalls, isLocalUrl, readSources, addUsage, describeError } = await load("src/api.ts", "api");
 const { cleanReply, offsetAt, sectionAt, sectionName } = await load("src/actions.ts", "actions");
 const { contextWindow, messageText, messageContent, docBlock, clipNote } = await load("src/history.ts", "history");
 const { fitSize, isImagePath, isAttachablePath, embeddedFiles, pastedName, stamp, humanSize, AttachmentStore } = await load("src/attach.ts", "attach");
@@ -802,12 +802,11 @@ check("мусор в режиме меню чинится", mergeSettings({ edit
 
 // ——— порядок провайдеров ———
 // Один список на выпадающее меню в настройках и на меню в шапке панели.
-check("порядок провайдеров", PROVIDER_ORDER, ["deepseek", "chadgpt", "gptunnel", "polza", "perplexity", "ollama"]);
+check("порядок провайдеров", PROVIDER_ORDER, ["deepseek", "chadgpt", "gptunnel", "polza", "perplexity", "ollama", "lmstudio"]);
 check("ollama узнаётся по адресу", providerOf({ baseUrl: "http://localhost:11434/v1" }), "ollama");
-// Пресет LM Studio убран, но его адрес у кого-то остался в настройках: он
-// должен работать дальше как «свой адрес», а не превратиться в поломку.
-check("адрес убранного пресета становится своим", providerOf({ baseUrl: "http://localhost:1234/v1" }), "custom");
-check("и остаётся локальным, то есть без ключа", isLocalUrl("http://localhost:1234/v1"), true);
+// Локальные серверы держатся вместе и последними: у них свой разговор про порт
+// и про ключ, которого не бывает.
+check("локальные серверы стоят в конце", providerRank("ollama") > providerRank("perplexity"), true);
 
 // ——— Perplexity ———
 // Поисковик с моделью поверх: OpenAI-совместим по адресу и методу, но списка
@@ -959,6 +958,26 @@ check("пустой адрес не локальный", isLocalUrl(""), false);
 check("локальный адрес без протокола идёт по http", endpoint("localhost:11434/v1", "/chat/completions"), "http://localhost:11434/v1/chat/completions");
 check("облачный адрес без протокола идёт по https", endpoint("api.deepseek.com", "/models"), "https://api.deepseek.com/models");
 check("свой адрес уходит в конец", providerRank("custom") > providerRank("polza"), true);
+
+// ——— LM Studio ———
+// Пресет однажды сняли из-за симптома «список моделей приходит, а на вопрос
+// тишина». Причина не в ней: CORS-заголовков она не отдаёт, а preflight на
+// /chat/completions отвечает четырёхсотой — то есть поток через fetch до
+// сервера не доходит вовсе, тогда как список идёт через requestUrl, мимо CORS.
+// Поэтому потока ей не даём — тем же путём, каким его не дают ChadGPT.
+check("адрес LM Studio опознаётся пресетом", providerOf({ baseUrl: "http://localhost:1234/v1" }), "lmstudio");
+check("слэш на конце не мешает опознать", providerOf({ baseUrl: "http://localhost:1234/v1/" }), "lmstudio");
+check("потока у LM Studio нет", streamAllowed("lmstudio"), false);
+check("у ChadGPT его по-прежнему нет", streamAllowed("chadgpt"), false);
+check("у Ollama поток остаётся", streamAllowed("ollama"), true);
+check("ключ у неё не спрашивается", isLocalUrl("http://localhost:1234/v1"), true);
+check("оба локальных сервера в конце списка", providerRank("lmstudio") > providerRank("perplexity"), true);
+// Адрес, лежавший в чужих настройках «своим», становится пресетом сам собой —
+// и модель из него не должна потеряться при первом же переключении.
+const wasCustom = mergeSettings({ baseUrl: "http://localhost:1234/v1", model: "vikhr-nemo-12b" });
+check("прежний «свой адрес» стал пресетом", providerOf(wasCustom), "lmstudio");
+check("модель уцелела в профиле", wasCustom.profiles.lmstudio.model, "vikhr-nemo-12b");
+check("тумблер потока у неё спрятан", streamAvailable(wasCustom), false);
 check(
   "профили из data.json раскладываются по списку",
   ["polza", "custom", "deepseek", "gptunnel", "chadgpt"].sort((a, b) => providerRank(a) - providerRank(b)),
@@ -1217,6 +1236,46 @@ const savedDoc = chatToMarkdown(
   "д",
 );
 check("документ в заметке — обычной ссылкой, не встроенной", savedDoc.includes("\n[[Книги/у.pdf]]"), true);
+
+// ——— разбор отказа провайдера ———
+// Текст ошибки — самое ценное, что есть в отказе, и терять его нельзя ни в
+// каком формате. У OpenAI в `error` объект с полем message; LM Studio отвечает
+// объектом на «нет такой модели» и голой строкой на всё остальное — и целая
+// объяснительная фраза пропадала, оставляя одно «провайдер отклонил запрос».
+const refusal = (raw, images) => describeError(400, raw, images).message;
+check(
+  "ошибка объектом читается",
+  refusal('{"error":{"message":"нет такой модели"}}').includes("нет такой модели"),
+  true,
+);
+check(
+  "ошибка строкой тоже читается",
+  refusal('{"error":"Context size has been exceeded."}').includes("Context size has been exceeded."),
+  true,
+);
+check("ошибка полем message читается", refusal('{"message":"так нельзя"}').includes("так нельзя"), true);
+check("не-JSON показывается как есть", refusal("<html>502 Bad Gateway</html>").includes("502 Bad Gateway"), true);
+check("пустое тело оставляет заголовок", refusal("{}").length > 0, true);
+// Подсказка про контекст: сервер объясняет по-английски и в терминах n_ctx.
+check(
+  "про тесный контекст сказано словами",
+  refusal('{"error":"n_keep: 8637 >= n_ctx: 8192"}').includes("context window"),
+  true,
+);
+check(
+  "и про инструменты по-прежнему тоже",
+  refusal('{"error":{"message":"tool_choice is not supported"}}').includes("support tools"),
+  true,
+);
+// Картинки: подсказка вешается на четырёхсотые, когда картинка в запросе была.
+check("про картинки — только когда они есть", refusal('{"error":"bad content"}', true).includes("accept images"), true);
+check("без картинок такой подсказки нет", refusal('{"error":"bad content"}', false).includes("accept images"), false);
+// Одна подсказка за раз: тесный контекст объясняет отказ лучше, о нём и говорим.
+check(
+  "подсказки не складываются",
+  refusal('{"error":"n_ctx exceeded while calling a tool"}').includes("support tools"),
+  false,
+);
 
 // ——— заметка под предел ———
 // Один и тот же нож режет и заметку в контексте, и заметку, брошенную на

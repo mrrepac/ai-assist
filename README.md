@@ -5,8 +5,8 @@ A sidebar chat with a language model, and in-place rewriting of the text you sel
 **Built for people working from Russia.** Every provider it ships with is reachable
 without a VPN and takes Russian payment cards: DeepSeek directly, plus three Russian
 aggregators — Polza.ai, ChadGPT and GPTunnel — which give you GPT, Claude, Gemini and the
-rest through a single key. And Ollama, if you would rather run a model on your own
-machine.
+rest through a single key. And Ollama or LM Studio, if you would rather run a model on
+your own machine.
 
 Most AI plugins are built around the chat. This one is built around the note: you select a
 piece of text, press a key, and the text changes. The chat is there too, in the right
@@ -97,13 +97,15 @@ without a VPN:
   first, then answers and attaches the links. You reach for it for facts and fresh news —
   the things an ordinary model does not know and happily invents. It has no note-editing
   tools, and the plugin does not send it any;
-- **Ollama** — a model on your own computer, free and offline.
+- **Ollama** and **LM Studio** — a model on your own computer, free and offline. With
+  LM Studio the answer arrives whole rather than letter by letter: it does not let a
+  plugin read it as it is written.
 
 Plus any other base URL you type in. The API key, the model and the address are remembered
 separately for each provider, so switching back and forth does not lose your keys.
 
-With **Ollama** running on your machine, nothing leaves it at all: no key is asked for and
-none is sent.
+With **Ollama** or **LM Studio** running on your machine, nothing leaves it at all: no key
+is asked for and none is sent.
 
 ## Getting started
 

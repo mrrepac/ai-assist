@@ -258,8 +258,9 @@ export const PROVIDERS: Record<string, { baseUrl: string }> = {
   gptunnel: { baseUrl: "https://gptunnel.ru/v1" },
   polza: { baseUrl: "https://api.polza.ai/api/v1" },
   perplexity: { baseUrl: "https://api.perplexity.ai" },
-  // Локальный сервер — в конец списка: у него свой разговор про ключ и порт.
+  // Локальные серверы — в конец списка: у них свой разговор про ключ и порт.
   ollama: { baseUrl: "http://localhost:11434/v1" },
+  lmstudio: { baseUrl: "http://localhost:1234/v1" },
 };
 
 /**
@@ -325,17 +326,33 @@ export function providerRank(name: string): number {
 }
 
 /**
- * Поток идёт обычным fetch, а его связывает CORS. ChadGPT нужных заголовков не
- * отдаёт, поэтому для него ответ забираем целиком через requestUrl — он ходит
- * мимо браузерных ограничений.
+ * Поток идёт обычным fetch, а его связывает CORS. Кто нужных заголовков не
+ * отдаёт, у того ответ забираем целиком через requestUrl — он ходит мимо
+ * браузерных ограничений.
  */
 export function streamAvailable(settings: AiAssistSettings): boolean {
   return streamAllowed(providerOf(settings));
 }
 
+/**
+ * Провайдеры, до которых потоком не достучаться.
+ *
+ * ChadGPT не отдаёт CORS-заголовков вовсе. LM Studio по умолчанию тоже:
+ * заголовка нет, а preflight на /chat/completions отвечает четырёхсотой — то
+ * есть POST до сервера даже не доходит. Отсюда и брался прежний симптом, из-за
+ * которого пресет однажды убрали: список моделей приходит (он идёт через
+ * requestUrl, мимо CORS), а на вопрос тишина. В её настройках сервера CORS
+ * включается переключателем, но по умолчанию он выключен — а настройка,
+ * которая работает только после похода в чужие настройки, не умолчание.
+ *
+ * Ollama, для сравнения, отдаёт заголовок эхом на app://obsidian.md, и поток
+ * до неё идёт без обходных путей.
+ */
+const NO_STREAM = ["chadgpt", "lmstudio"];
+
 /** То же по имени провайдера: разовый прогон идёт мимо активных настроек. */
 export function streamAllowed(provider: string): boolean {
-  return provider !== "chadgpt";
+  return !NO_STREAM.includes(provider);
 }
 
 /**
@@ -396,6 +413,8 @@ export function providerLabel(name: string): string {
       return t("setProviderPerplexity");
     case "ollama":
       return t("setProviderOllama");
+    case "lmstudio":
+      return t("setProviderLmStudio");
     default:
       return t("setProviderCustom");
   }

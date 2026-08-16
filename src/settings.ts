@@ -37,6 +37,7 @@ const MODEL_HINT: Record<string, I18nKey> = {
   polza: "setModelPolza",
   perplexity: "setModelPerplexity",
   ollama: "setModelOllama",
+  lmstudio: "setModelLmStudio",
 };
 
 export class AiAssistSettingTab extends PluginSettingTab {

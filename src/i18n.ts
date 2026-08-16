@@ -323,6 +323,7 @@ const en = {
   setProviderTunnel: "GPTunnel",
   setProviderPerplexity: "Perplexity",
   setProviderOllama: "Ollama (on this computer)",
+  setProviderLmStudio: "LM Studio (on this computer)",
   setProviderCustom: "Another OpenAI-compatible one",
   setModelPerplexity:
     "sonar is cheap and quick, sonar-pro digs deeper, sonar-reasoning-pro thinks it through, " +
@@ -337,6 +338,10 @@ const en = {
     "Press “Fetch the list” — it shows the models you have pulled. Ollama has to be running; " +
     "no key is needed. From a phone the model runs on the desktop, so it is out of reach.",
   setModelChad: "Names look like gpt-5.4 or claude-4.5-sonnet — press “Fetch the list”.",
+  setModelLmStudio:
+    "Press “Fetch the list” — it shows the models you have downloaded. The server has to be " +
+    "started on the Developer tab; no key is needed. The answer arrives whole rather than " +
+    "letter by letter: LM Studio does not let a plugin read it as it is written.",
   setPickModel: "Now press “Fetch the list” and pick a model — the names here are different",
   setModelPolza: "Names look like provider/model, for example deepseek/deepseek-v4-flash.",
   setBaseUrl: "API address",
@@ -432,6 +437,9 @@ const en = {
     "The model used up all {steps} rounds of edits and is still going. What it did is applied; " +
     "ask again if the work is not finished.",
   errTimeout: "The provider stopped answering — the request was dropped",
+  errContext:
+    "The model was loaded with a context window too small for this request — reload it with a " +
+    "larger one, or send less: turn off the note as context, or start a new chat",
   errTools: "This model does not seem to support tools — turn them off in the settings",
   errImages: "This model does not seem to accept images — ask another one, or detach the file",
   errModelList: "The provider did not return a list of models",
@@ -751,6 +759,7 @@ const ru: typeof en = {
   setProviderTunnel: "GPTunnel",
   setProviderPerplexity: "Perplexity",
   setProviderOllama: "Ollama (на этом компьютере)",
+  setProviderLmStudio: "LM Studio (на этом компьютере)",
   setProviderCustom: "Другой OpenAI-совместимый",
   setModelPerplexity:
     "sonar дешёвая и быстрая, sonar-pro копает глубже, sonar-reasoning-pro рассуждает, " +
@@ -765,6 +774,10 @@ const ru: typeof en = {
     "Нажми «Получить список» — покажет то, что скачано. Ollama должна быть запущена, ключ не " +
     "нужен. С телефона не достать: модель крутится на компьютере.",
   setModelChad: "Имена вида gpt-5.4 или claude-4.5-sonnet — нажми «Получить список».",
+  setModelLmStudio:
+    "Нажми «Получить список» — покажет то, что скачано. Сервер должен быть запущен на вкладке " +
+    "Developer, ключ не нужен. Ответ приходит целиком, а не по буквам: LM Studio не даёт " +
+    "плагину читать его по мере написания.",
   setPickModel: "Теперь нажми «Получить список» и выбери модель — имена здесь другие",
   setModelPolza: "Имена вида провайдер/модель, например deepseek/deepseek-v4-flash.",
   setBaseUrl: "Адрес API",
@@ -860,6 +873,9 @@ const ru: typeof en = {
     "Модель израсходовала все {steps} кругов правок и не закончила. Сделанное применено; " +
     "спроси ещё раз, если работа не доведена до конца.",
   errTimeout: "Провайдер перестал отвечать — запрос снят",
+  errContext:
+    "Модель загружена со слишком маленьким окном контекста — перезагрузи её с бо́льшим или " +
+    "отправь меньше: выключи заметку в контексте или начни новый чат",
   errTools: "Похоже, эта модель не умеет инструменты — выключи их в настройках",
   errImages: "Похоже, эта модель не принимает картинки — спроси другую или сними вложение",
   errModelList: "Провайдер не отдал список моделей",
