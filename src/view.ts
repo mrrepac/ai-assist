@@ -9,7 +9,7 @@ import {
   WorkspaceLeaf,
   setIcon,
 } from "obsidian";
-import { ApiConfig, ApiError, ChatMessage, Source, Usage, chat } from "./api";
+import { ApiConfig, ApiError, ChatMessage, Source, Usage, addUsage, chat } from "./api";
 import {
   AttachmentStore,
   attachmentData,
@@ -28,7 +28,7 @@ import {
 } from "./attach";
 import { stripCitations } from "./cite";
 import { DiffResult, diffWords } from "./diff";
-import { AttachedDoc, contextWindow, messageContent, messageText } from "./history";
+import { AttachedDoc, clipNote, contextWindow, messageContent, messageText } from "./history";
 import { isPdfPath, pdfText } from "./pdf";
 import { t } from "./i18n";
 import { ImageSuggestModal, ModelSuggestModal } from "./modals";
@@ -93,6 +93,13 @@ export interface ChatHost extends ToolHost {
    * должна.
    */
   attachments: AttachmentStore;
+  /**
+   * Что приложено к следующему вопросу. Здесь по той же причине, что и сами
+   * данные: панель закрывают и открывают — и вьюха при этом создаётся заново,
+   * — а список приложенного должен пережить это вместе с картинками, иначе
+   * хранить их было незачем.
+   */
+  files: Attachment[];
   persistHistory(): void;
   /** Записать настройки: панель меняет модель и провайдера прямо из шапки. */
   saveSettings(): Promise<void>;
@@ -176,8 +183,6 @@ export class ChatView extends ItemView {
   private msgEls = new WeakMap<StoredChatMessage, HTMLElement>();
   /** Выделение, о котором пойдёт вопрос. Показано плашкой над полем ввода. */
   private attached: { path: string; text: string } | null = null;
-  /** Картинки, приложенные к следующему вопросу. Уходят вместе с ним и снимаются. */
-  private files: Attachment[] = [];
   /** Снятый крестиком фрагмент: пока выделение то же, обратно не подхватываем. */
   private dismissed: string | null = null;
   /** Где стоим, листая прошлые вопросы стрелками; -1 — не листаем. */
@@ -185,6 +190,19 @@ export class ChatView extends ItemView {
 
   constructor(leaf: WorkspaceLeaf, private host: ChatHost) {
     super(leaf);
+  }
+
+  /**
+   * Картинки и документы, приложенные к следующему вопросу. Хранятся у плагина,
+   * а не здесь: вьюха умирает вместе с закрытой вкладкой панели, и приложенное
+   * пропадало бы вместе с ней — при том, что сами данные плагин бережно держит.
+   */
+  private get files(): Attachment[] {
+    return this.host.files;
+  }
+
+  private set files(list: Attachment[]) {
+    this.host.files = list;
   }
 
   getViewType(): string {
@@ -359,6 +377,10 @@ export class ChatView extends ItemView {
     // Восстановленный черновик может быть в несколько строк — поле подгоняем
     // под него сразу, а не при первой букве.
     this.autoGrow();
+    // Панель могли закрыть с приложенной картинкой: она пережила это у плагина,
+    // и плашку надо нарисовать своей рукой — catchSelection выше рисует её
+    // только тогда, когда сменилось выделение.
+    this.paintAttach();
     this.repaint();
   }
 
@@ -840,15 +862,7 @@ export class ChatView extends ItemView {
       // перенос строки разорвал бы слово или строку песни.
       msg.content += added;
       msg.truncated = result.truncated || undefined;
-      if (result.usage && msg.usage) {
-        msg.usage = {
-          prompt: msg.usage.prompt + result.usage.prompt,
-          completion: msg.usage.completion + result.usage.completion,
-          cached: msg.usage.cached + result.usage.cached,
-        };
-      } else if (result.usage) {
-        msg.usage = result.usage;
-      }
+      msg.usage = addUsage(msg.usage ?? null, result.usage) ?? undefined;
       if (result.sources.length) msg.sources = result.sources;
       this.host.persistHistory();
 
@@ -1184,18 +1198,79 @@ export class ChatView extends ItemView {
         void this.takeFiles(files);
         return;
       }
-      // Из проводника Obsidian приезжает не файл, а ссылка на него.
-      const text = e.dataTransfer?.getData("text/plain") ?? "";
+      const text = (e.dataTransfer?.getData("text/plain") ?? "").trim();
+      if (!text) return;
+
+      // Из проводника Obsidian приезжает не файл, а ссылка на него. Ищем файл
+      // только по ней или по полному пути: голое слово «Идеи» тоже совпало бы с
+      // заметкой, и брошенный текст молча превращался бы в чужой файл.
+      const wiki = /^!?\[\[.+\]\]$/.test(text);
       const link = text.replace(/^!?\[\[|\]\]$/g, "").split("|")[0].trim();
-      if (!link) return;
-      const file =
-        this.app.vault.getAbstractFileByPath(link) ??
-        this.app.metadataCache.getFirstLinkpathDest(link, this.host.targetPath() ?? "");
-      if (file instanceof TFile && isAttachablePath(file.path)) {
+      const file = wiki
+        ? this.app.vault.getAbstractFileByPath(link) ??
+          this.app.metadataCache.getFirstLinkpathDest(link, this.host.targetPath() ?? "")
+        : this.app.vault.getAbstractFileByPath(text);
+
+      if (file instanceof TFile) {
         e.preventDefault();
-        void this.addFromVault(file.path);
+        if (isAttachablePath(file.path)) void this.addFromVault(file.path);
+        else if (file.extension === "md") void this.attachNote(file);
+        else new Notice(t("chatAttachNotImage"));
+        return;
       }
+
+      // Текст, который тащат внутри самого поля, оно переставит само: вмешаться
+      // значит получить две копии — свою вставку и его перенос.
+      if (e.target === this.inputEl) return;
+      e.preventDefault();
+      this.dropText(text);
     });
+  }
+
+  /**
+   * Брошенная в панель заметка — фрагментом на плашку, тем же путём, что и
+   * выделение: уедет вместе с вопросом и там же будет видна. Рамка обещает
+   * «приложу к вопросу», и до сих пор для всего, кроме картинки и документа,
+   * это было неправдой — подсветка загоралась, а отпущенное пропадало.
+   */
+  private async attachNote(file: TFile): Promise<void> {
+    // Приватность важнее удобства: молча увезти кусок хранилища оттуда, где
+    // хранилища как бы нет, — обман. Говорим вслух и не прикладываем.
+    if (this.host.settings.privateChat) {
+      new Notice(t("chatPrivateNoQuote"));
+      return;
+    }
+    const raw = await this.app.vault.cachedRead(file).catch(() => "");
+    if (!raw.trim()) {
+      new Notice(t("chatDropNoteEmpty"));
+      return;
+    }
+    // Тот же нож, что у заметки в контексте: длинную берём началом, иначе на
+    // плашку ляжет то, за что заплатят не глядя.
+    const { text, clipped } = clipNote(raw);
+    this.dismissed = null;
+    this.attach({ path: file.path, text });
+    if (clipped) new Notice(t("chatContextClipped"));
+  }
+
+  /**
+   * Брошенный в панель текст — в поле вопроса, на место курсора. Поле могло
+   * быть не в фокусе — тогда дописываем в конец: втыкать в начало написанного
+   * человек точно не просил.
+   */
+  private dropText(text: string): void {
+    const input = this.inputEl;
+    const at =
+      input.ownerDocument.activeElement === input ? input.selectionStart : input.value.length;
+    const before = input.value.slice(0, at);
+    const after = input.value.slice(at);
+    // Приклеенное вплотную к чужому слову читается как опечатка.
+    const added = (before && !/\s$/.test(before) ? " " : "") + text + (after && !/^\s/.test(after) ? " " : "");
+    input.value = before + added + after;
+    this.autoGrow();
+    this.saveDraft();
+    input.focus();
+    input.setSelectionRange(at + added.length, at + added.length);
   }
 
   /**
@@ -1418,7 +1493,7 @@ export class ChatView extends ItemView {
       if (text) out.push({ name: att.name, text, clipped: att.clipped === true });
       else gone++;
     }
-    if (gone) new Notice(t("chatAttachGone"));
+    if (gone) new Notice(t("chatAttachDocGone"));
     return out;
   }
 
@@ -1512,7 +1587,12 @@ export class ChatView extends ItemView {
     // приложенная для следующего вопроса, она уехала бы с чужим запросом — за
     // те же деньги и без спроса.
     const files = (opts.files === undefined ? (opts.fromEditor ? [] : this.files) : opts.files) ?? [];
-    if (!opts.fromEditor) this.files = [];
+    // С плашки снимаем только то, что с неё и взяли. Картинки, переданные явно
+    // («спросить заново», «повторить» после ошибки), к плашке отношения не
+    // имеют: приложенное там ждёт следующего вопроса, и стереть его молча —
+    // потерять чужую работу, а заодно оставить её висеть в памяти сеанса
+    // навсегда: в ленту она не попала, и забыть её будет уже некому.
+    if (opts.files === undefined && !opts.fromEditor) this.files = [];
     this.attach(null);
     // Про этот кусок уже спросили, и он остался в ленте. Выделение в заметке
     // никуда не делось — без этого плашка тут же вернулась бы, и фрагмент уехал
@@ -2229,9 +2309,16 @@ export class ChatView extends ItemView {
     const copy = foot.createEl("button", { cls: "clickable-icon" });
     setIcon(copy, "copy");
     copy.setAttr("aria-label", t("chatCopy"));
+    // Буфер отдаёт отказ и без видимой причины — окно потеряло фокус, система
+    // не дала прав. Без разбора отказа не появлялось вообще ничего: уведомление
+    // стоит за await, и до него не доходило.
     copy.onclick = async () => {
-      await navigator.clipboard.writeText(text);
-      new Notice(t("chatCopied"));
+      try {
+        await navigator.clipboard.writeText(text);
+        new Notice(t("chatCopied"));
+      } catch {
+        new Notice(t("chatCopyFailed"));
+      }
     };
 
     // Кнопка с подписью, а не иконка: модель то и дело пишет «вставь сам», и

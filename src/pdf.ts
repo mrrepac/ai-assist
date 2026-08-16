@@ -155,6 +155,8 @@ export async function pdfText(bytes: ArrayBuffer, limit = PDF_LIMIT): Promise<Pd
       .promise;
     const pages: string[] = [];
     let total = 0;
+    /** Вышли из чтения, не дойдя до последней страницы, — часть файла не видели. */
+    let stopped = false;
     for (let n = 1; n <= doc.numPages; n++) {
       const page = await doc.getPage(n);
       const content = await page.getTextContent();
@@ -163,10 +165,17 @@ export async function pdfText(bytes: ArrayBuffer, limit = PDF_LIMIT): Promise<Pd
       total += text.length;
       // Дальше читать незачем: в запрос всё равно уедет только начало, а
       // страницы разбираются не бесплатно.
-      if (total > limit) break;
+      if (total > limit) {
+        stopped = n < doc.numPages;
+        break;
+      }
     }
     const { text, clipped } = clipPages(pages, limit);
-    return { text, pages: doc.numPages, clipped: clipped || total > limit };
+    // Не «total > limit»: единственная страница длиннее предела уезжает целиком
+    // — так решено в clipPages, — и объявлять её началом значит врать дважды.
+    // На плашке появлялось «только начало», а модель получала приписку о том,
+    // что документ обрезан, и отказывалась судить по «неполному» тексту.
+    return { text, pages: doc.numPages, clipped: clipped || stopped };
   } catch (e) {
     console.error("ai-assist: не удалось прочитать PDF", e);
     return null;

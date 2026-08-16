@@ -38,9 +38,9 @@ async function load(entry, name) {
   return import("file:///" + outfile.replace(/\\/g, "/"));
 }
 
-const { drainSse, endpoint, collectToolCalls, isLocalUrl, readSources } = await load("src/api.ts", "api");
+const { drainSse, endpoint, collectToolCalls, isLocalUrl, readSources, addUsage } = await load("src/api.ts", "api");
 const { cleanReply, offsetAt, sectionAt, sectionName } = await load("src/actions.ts", "actions");
-const { contextWindow, messageText, messageContent, docBlock } = await load("src/history.ts", "history");
+const { contextWindow, messageText, messageContent, docBlock, clipNote } = await load("src/history.ts", "history");
 const { fitSize, isImagePath, isAttachablePath, embeddedFiles, pastedName, stamp, humanSize, AttachmentStore } = await load("src/attach.ts", "attach");
 const { isPdfPath, joinItems, tidy, clipPages } = await load("src/pdf.ts", "pdf");
 const { mergeSettings, providerOf, streamAvailable, streamAllowed, configFor, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank, toolsAllowed, builtinModels, activeConfig } = await load("src/types.ts", "types");
@@ -1217,6 +1217,29 @@ const savedDoc = chatToMarkdown(
   "д",
 );
 check("документ в заметке — обычной ссылкой, не встроенной", savedDoc.includes("\n[[Книги/у.pdf]]"), true);
+
+// ——— заметка под предел ———
+// Один и тот же нож режет и заметку в контексте, и заметку, брошенную на
+// плашку: разъехавшись, они дали бы два разных ответа на вопрос «сколько уедет».
+check("короткая заметка не режется", clipNote("коротко", 100), { text: "коротко", clipped: false });
+check("ровно по пределу — ещё не обрезка", clipNote("абвг", 4).clipped, false);
+check("длинная берётся началом", clipNote("абвгд", 3), { text: "абв", clipped: true });
+
+// ——— расход за несколько заходов ———
+// Длинный ответ модель отдаёт в два-три приёма, и каждый оплачен. Показать
+// только последний — назвать цену меньше настоящей: именно так терялся самый
+// дорогой, первый заход оборванной правки.
+const spent = (p, c, k) => ({ prompt: p, completion: c, cached: k });
+check("расход складывается по всем полям", addUsage(spent(10, 5, 2), spent(1, 2, 3)), spent(11, 7, 5));
+check("первого захода не было — берём второй", addUsage(null, spent(1, 2, 3)), spent(1, 2, 3));
+check("второго не было — остаётся первый", addUsage(spent(1, 2, 3), null), spent(1, 2, 3));
+check("не было ни одного — и складывать нечего", addUsage(null, null), null);
+// Складываем, а не переписываем: иначе повтор сложения затирал бы накопленное.
+check("слагаемое не портится", (() => {
+  const first = spent(10, 5, 2);
+  addUsage(first, spent(1, 1, 1));
+  return first;
+})(), spent(10, 5, 2));
 
 console.log(`\n${pass} прошло, ${fail} упало`);
 process.exit(fail ? 1 : 0);

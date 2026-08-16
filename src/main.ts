@@ -22,10 +22,11 @@ import {
   shortName,
   systemFor,
 } from "./actions";
-import { ApiConfig, ApiError, Usage, chat } from "./api";
+import { ApiConfig, ApiError, Usage, addUsage, chat } from "./api";
 import { AttachmentStore } from "./attach";
 import { chatToMarkdown } from "./chatnote";
 import { diffWords } from "./diff";
+import { clipNote } from "./history";
 import { I18nKey, t } from "./i18n";
 import { askConfirm } from "./modals";
 import { QuickMenu, QuickScope, RECENT_LIMIT } from "./quickmenu";
@@ -34,6 +35,7 @@ import { AiAssistSettingTab } from "./settings";
 import {
   ActionEntry,
   AiAssistSettings,
+  Attachment,
   HistoryItem,
   QUICK_ASK,
   StoredChatMessage,
@@ -49,8 +51,6 @@ import {
 } from "./types";
 import { ChatHost, ChatView, VIEW_TYPE_CHAT } from "./view";
 
-/** Сколько символов заметки максимум уходит в контекст чата. */
-const CONTEXT_LIMIT = 40000;
 /** Сколько сообщений храним между запусками. */
 const HISTORY_LIMIT = 100;
 /** Сколько символов результата показывать в журнале: он и так уже в заметке. */
@@ -76,15 +76,6 @@ const SCOPE_LABEL: Record<ScopeKind, I18nKey> = {
   section: "scopeSection",
   note: "scopeNote",
 };
-
-/**
- * Заметка в контекст: длинную берём началом. Что она обрезана, говорим и модели,
- * и пользователю — иначе ответ по половине текста выглядит как ответ по всему.
- */
-function clip(text: string): { text: string; clipped: boolean } {
-  if (text.length <= CONTEXT_LIMIT) return { text, clipped: false };
-  return { text: text.slice(0, CONTEXT_LIMIT), clipped: true };
-}
 
 /** Что нужно, чтобы отменить одну правку — и чтобы переделать её заново. */
 interface UndoRecord {
@@ -133,6 +124,12 @@ interface Unfinished {
   system: string;
   /** Всё, что модель успела написать, — целиком, без обрезки для карточки. */
   text: string;
+  /**
+   * Расход всех заходов вместе. Первый — самый дорогой (весь кусок туда,
+   * тысячи знаков обратно), и потерять его значит показать цену правки вдвое
+   * меньше настоящей: до этого он выбрасывался вместе с оборванным ответом.
+   */
+  usage: Usage | null;
 }
 
 export default class AiAssistPlugin extends Plugin implements ChatHost {
@@ -144,6 +141,12 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
    * легли в хранилище, это не касается — они читаются с диска по пути.
    */
   attachments = new AttachmentStore();
+  /**
+   * Что приложено к следующему вопросу. Здесь, а не в панели, по той же
+   * причине: вьюха умирает вместе с закрытой вкладкой, и список приложенного
+   * умирал бы с ней — при живых данных, которые её пережили.
+   */
+  files: Attachment[] = [];
   private undoable = new Map<string, UndoRecord>();
   /** Оборванные правки, которые ещё можно дописать. Живут до перезапуска. */
   private unfinished = new Map<string, Unfinished>();
@@ -255,6 +258,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     // Временные ссылки на картинки живут до конца сеанса сами по себе —
     // отпускаем их вместе с плагином, иначе это утечка ровно на их размер.
     this.attachments.clear();
+    this.files = [];
     // Отложенная запись истории: таймер мог быть заведён за секунду до
     // выгрузки. Гасим его и дописываем сейчас — иначе он сработает, когда
     // плагина уже нет, а последние сообщения пропадут.
@@ -398,7 +402,21 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   // ——————————————————————— чат в заметку ———————————————————————
 
   chatMarkdown(): string {
-    return chatToMarkdown(this.history, this.settings.model, moment().format("DD.MM.YYYY HH:mm"));
+    return chatToMarkdown(this.history, this.chatModel(), moment().format("DD.MM.YYYY HH:mm"));
+  }
+
+  /**
+   * Кем подписать сохранённый разговор. Не тем, что стоит в шапке настроек: в
+   * приватном чате отвечает своя модель, а «спросить заново» умеет позвать
+   * третью на один ответ — и в заметке оказывалась бы модель, не сказавшая в
+   * этом разговоре ни слова. Берём последнюю, что действительно отвечала.
+   */
+  private chatModel(): string {
+    for (let i = this.history.length - 1; i >= 0; i--) {
+      const item = this.history[i];
+      if (!isActionEntry(item) && item.role === "assistant" && item.model) return item.model;
+    }
+    return this.chatConfig().model;
   }
 
   /**
@@ -688,7 +706,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       // В заметку он не пойдёт: замена выглядела бы как обычная правка, а на
       // деле стёрла бы половину текста. Сам ответ остаётся в карточке.
       if (result.truncated) {
-        this.holdUnfinished(entry, { target, cfg, system, text: result.text });
+        this.holdUnfinished(entry, { target, cfg, system, text: result.text, usage: result.usage });
         new Notice(t("cutOff"), 10000);
         return;
       }
@@ -960,6 +978,12 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     }
     entry.content = held.text.slice(-LOG_PREVIEW);
     entry.truncated = true;
+    // За оборванный ответ уже заплачено, и дописывать его могут не сразу — а то
+    // и не станут вовсе. Расход показываем сейчас, иначе карточка молчит о
+    // деньгах, которые с человека уже взяли.
+    if (held.usage) {
+      entry.usage = { prompt: held.usage.prompt, completion: held.usage.completion };
+    }
     this.finishEntry(entry, "error", t("cutOff"));
   }
 
@@ -1015,6 +1039,9 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
         },
       );
 
+      // Заход оплачен в любом случае — и когда его оборвали, и когда модель
+      // снова не уложилась. Складываем сразу, пока результат под рукой.
+      held.usage = addUsage(held.usage, result.usage);
       if (controller.signal.aborted) {
         // Остановили руками — то, что успело прийти, дописываем к отложенному:
         // следующая попытка начнёт с него, а не с прежнего места.
@@ -1040,7 +1067,9 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
         return;
       }
       entry.truncated = false;
-      this.applyResult(entry, target, replacement, result.usage);
+      // Не `result.usage`: в карточке должна стоять цена всей правки, а не
+      // одного последнего захода.
+      this.applyResult(entry, target, replacement, held.usage);
     } catch (e) {
       const message = e instanceof ApiError ? e.message : String(e);
       // Отложенное не выбрасываем: сеть отвалилась — попробуют ещё раз.
@@ -1263,7 +1292,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     if (!view?.file) return null;
     const text = view.editor.getValue();
     if (!hasText(text)) return null;
-    return { path: view.file.path, ...clip(text) };
+    return { path: view.file.path, ...clipNote(text) };
   }
 
   /**
@@ -1276,7 +1305,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     if (!view?.file) return null;
     const text = view.editor.getSelection();
     if (!hasText(text)) return null;
-    return { path: view.file.path, text: clip(text).text };
+    return { path: view.file.path, text: clipNote(text).text };
   }
 
   insertIntoEditor(text: string): boolean {
@@ -1306,7 +1335,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   readNote(): { path: string; text: string; clipped: boolean } | null {
     const view = this.centralNote();
     if (!view?.file) return null;
-    return { path: view.file.path, ...clip(view.editor.getValue()) };
+    return { path: view.file.path, ...clipNote(view.editor.getValue()) };
   }
 
   noteText(path: string): string | null {

@@ -106,6 +106,7 @@ const en = {
   chatClipNoImages: "There is nothing to attach in the vault",
   chatAttachRemove: "Do not send this",
   chatAttachDropHere: "Drop it — I will attach it to the question",
+  chatDropNoteEmpty: "That note has no text",
   chatAttachFailed: "Could not read the file",
   chatAttachNotImage: "Only an image or a PDF can be attached",
   chatAttachDoc: "{pages} pp. · {chars} chars",
@@ -120,6 +121,9 @@ const en = {
   chatAttachBlind: "{model} does not accept images",
   chatAttachSwitch: "Ask a different one",
   chatAttachGone: "The image did not survive the restart",
+  // Документ в хранилище не копируется вовсе, поэтому пропадает он чаще
+  // картинки — и говорить про него «картинка» тем более нельзя.
+  chatAttachDocGone: "The document did not survive the restart",
   chatAttachPrivate: "In a private chat the image is not saved to the vault",
   chatAttachNotSaved: "(image, not saved to the vault)",
   chatNoteFragment: "About the fragment:",
@@ -538,6 +542,7 @@ const ru: typeof en = {
   chatClipNoImages: "В хранилище прикладывать нечего",
   chatAttachRemove: "Не отправлять это",
   chatAttachDropHere: "Отпусти — приложу к вопросу",
+  chatDropNoteEmpty: "В этой заметке нет текста",
   chatAttachFailed: "Не вышло прочитать файл",
   chatAttachNotImage: "Приложить можно картинку или PDF",
   chatAttachDoc: "{pages} стр. · {chars} знаков",
@@ -551,6 +556,7 @@ const ru: typeof en = {
   chatAttachBlind: "{model} не принимает картинки",
   chatAttachSwitch: "Спросить другую",
   chatAttachGone: "Картинка не пережила перезапуск",
+  chatAttachDocGone: "Документ не пережил перезапуск",
   chatAttachPrivate: "В приватном чате картинка в хранилище не сохраняется",
   chatAttachNotSaved: "(картинка, в хранилище не сохранена)",
   chatNoteFragment: "О фрагменте:",

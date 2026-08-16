@@ -154,6 +154,21 @@ export interface Usage {
   cached: number;
 }
 
+/**
+ * Расход двух запросов в один. Длинный ответ модель отдаёт в несколько заходов,
+ * и каждый из них оплачен: показать только последний — значит назвать цену
+ * вдвое меньше настоящей.
+ */
+export function addUsage(a: Usage | null, b: Usage | null): Usage | null {
+  if (!a) return b;
+  if (!b) return a;
+  return {
+    prompt: a.prompt + b.prompt,
+    completion: a.completion + b.completion,
+    cached: a.cached + b.cached,
+  };
+}
+
 export interface ChatResult {
   text: string;
   reasoning: string;
