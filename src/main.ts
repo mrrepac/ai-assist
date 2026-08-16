@@ -342,6 +342,30 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   }
 
   /**
+   * Отложить копию непрочитанного файла, пока мы не написали поверх него свой.
+   * Существующую копию не трогаем: в ней настоящие ключи, а сегодняшний файл
+   * мог быть уже огрызком, и вторая попытка затёрла бы хорошее плохим.
+   *
+   * Расширение .bak выбрано не случайно: файлы плагина Obsidian синхронизирует
+   * по точному списку (manifest.json, main.js, styles.css, data.json), и копия
+   * в него не попадает — она останется на этой машине.
+   */
+  private async rescue(name: string): Promise<string | null> {
+    const dir = this.manifest.dir;
+    if (!dir) return null;
+    const to = `${dir}/${name}.bak`;
+    try {
+      if (await this.app.vault.adapter.exists(to)) return to;
+      const raw = await this.app.vault.adapter.read(`${dir}/${name}`);
+      if (!raw) return null;
+      await this.app.vault.adapter.write(to, raw);
+      return to;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Лента из своего файла, а если его нет — из настроек: там она жила до сих
    * пор. Прочитанное сразу переносим, и в data.json остаются одни настройки.
    */
@@ -351,10 +375,14 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     if (!path) return Array.isArray(stored) ? stored.slice(-HISTORY_LIMIT) : [];
     try {
       if (await this.app.vault.adapter.exists(path)) {
-        return readHistory(JSON.parse(await this.app.vault.adapter.read(path))).items;
+        const read = readHistory(JSON.parse(await this.app.vault.adapter.read(path)));
+        // Лента расходная, поэтому копию делаем молча: пугать человека на
+        // старте из-за вчерашнего разговора незачем, а вернуть его — можно.
+        if (read.broken) await this.rescue("history.json");
+        return read.items;
       }
     } catch {
-      // Файл побился — лента не то, ради чего стоит падать при загрузке.
+      await this.rescue("history.json");
       return [];
     }
     if (!Array.isArray(stored) || stored.length === 0) return [];
@@ -378,6 +406,13 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
     const read = readStore(await this.loadData());
     this.settings = read.settings;
     this.rest = read.rest;
+    if (read.state === "broken") {
+      const bak = await this.rescue("data.json");
+      // Молчать тут нельзя: настройки заменились умолчаниями, и первое же
+      // сохранение закрепит это на диске. Пятнадцать секунд — чтобы успеть
+      // прочитать путь.
+      new Notice(bak ? t("dataBroken", { path: bak }) : t("dataBrokenNoCopy"), 15000);
+    }
     this.history = (await this.loadHistory(read.legacy)).slice(-HISTORY_LIMIT);
 
     // Вчерашний разговор не подхватываем: Obsidian открывается с чистой лентой.

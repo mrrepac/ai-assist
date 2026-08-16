@@ -444,6 +444,11 @@ const en = {
   errTools: "This model does not seem to support tools — turn them off in the settings",
   errImages: "This model does not seem to accept images — ask another one, or detach the file",
   errModelList: "The provider did not return a list of models",
+  dataBroken:
+    "The settings file could not be read, so the defaults are in use. The old file is kept " +
+    "next to it as {path} — your API keys are in there.",
+  dataBrokenNoCopy:
+    "The settings file could not be read, so the defaults are in use. Copying the old file failed.",
 };
 
 const ru: typeof en = {
@@ -881,6 +886,11 @@ const ru: typeof en = {
   errTools: "Похоже, эта модель не умеет инструменты — выключи их в настройках",
   errImages: "Похоже, эта модель не принимает картинки — спроси другую или сними вложение",
   errModelList: "Провайдер не отдал список моделей",
+  dataBroken:
+    "Файл настроек не прочитался, поэтому работают умолчания. Прежний файл сохранён рядом: " +
+    "{path} — ключи провайдеров в нём.",
+  dataBrokenNoCopy:
+    "Файл настроек не прочитался, поэтому работают умолчания. Скопировать прежний файл не удалось.",
 };
 
 export type I18nKey = keyof typeof en;
