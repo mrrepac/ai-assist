@@ -35,7 +35,9 @@ const en = {
     "only. Never change how the text is broken into lines: return exactly as many lines as you " +
     "were given, along with the blank lines between them. If a line ends with two spaces, return " +
     "it with two spaces as well — that is a markdown hard break, poems and songs are held " +
-    "together by it, and without it the lines collapse into a single paragraph.",
+    "together by it, and without it the lines collapse into a single paragraph." +
+    " Do not swap the characters themselves: a hyphen must not become an em dash and a plain " +
+    "space must not become a non-breaking or thin one — return the same character that came in.",
   promptOnlyText:
     "Your reply must contain the resulting text ONLY, exactly as it should sit in the note: no " +
     "preamble, no closing remarks, no explanation of what you changed, no alternatives to choose " +
@@ -491,7 +493,9 @@ const ru: typeof en = {
     "заметками; в ссылке вида [[файл|подпись]] правь только подпись. Разбивку на строки не меняй " +
     "никогда: сколько строк пришло — столько верни, вместе с пустыми строками между ними. Если " +
     "строка кончается двумя пробелами, верни её тоже с двумя пробелами — это жёсткий перенос " +
-    "markdown, на нём держатся стихи и песни, и без него строки слипнутся в абзац.",
+    "markdown, на нём держатся стихи и песни, и без него строки слипнутся в абзац." +
+    " Сами знаки не подменяй: дефис не превращай в длинное тире, а обычный пробел — в " +
+    "неразрывный или узкий; какой знак пришёл, такой и верни.",
   promptOnlyText:
     "В ответе — ТОЛЬКО получившийся текст, ровно в том виде, в каком он должен лежать в заметке: " +
     "без предисловий и послесловий, без пояснений к правкам, без вариантов на выбор, без кавычек " +
