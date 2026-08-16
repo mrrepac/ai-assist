@@ -29,12 +29,13 @@ const en = {
     "exactly to fix and how, to make the text perfect.",
   promptKeepMarkup:
     "The text comes from a note, so preserve its markup character for character: markdown symbols, " +
-    "indentation, line breaks and blank lines, ==highlights==, code blocks with their contents, " +
-    "URLs, formulas and #tags. Never change a single character inside [[double square brackets]] — " +
-    "those are file names, and editing them breaks the links between notes; in a [[file|label]] " +
-    "link edit the label only. In poems and songs never change how the text is broken into lines: " +
-    "a line without a full stop, a dash instead of a comma or a lower-case letter starting a line " +
-    "is the author's device, not a mistake.",
+    "indentation, ==highlights==, code blocks with their contents, URLs, formulas and #tags. " +
+    "Never change a single character inside [[double square brackets]] — those are file names, " +
+    "and editing them breaks the links between notes; in a [[file|label]] link edit the label " +
+    "only. Never change how the text is broken into lines: return exactly as many lines as you " +
+    "were given, along with the blank lines between them. If a line ends with two spaces, return " +
+    "it with two spaces as well — that is a markdown hard break, poems and songs are held " +
+    "together by it, and without it the lines collapse into a single paragraph.",
   promptOnlyText:
     "Your reply must contain the resulting text ONLY, exactly as it should sit in the note: no " +
     "preamble, no closing remarks, no explanation of what you changed, no alternatives to choose " +
@@ -474,11 +475,12 @@ const ru: typeof en = {
     "рекомендаций: что именно и как нужно исправить, чтобы сделать текст идеальным.",
   promptKeepMarkup:
     "Текст взят из заметки, поэтому разметку сохраняй посимвольно: знаки markdown, отступы, " +
-    "переносы строк и пустые строки, ==выделения==, блоки кода вместе с содержимым, ссылки, " +
-    "формулы и #теги. Ни одной буквы не меняй внутри [[двойных квадратных скобок]] — это имена " +
-    "файлов, и правка рвёт связи между заметками; в ссылке вида [[файл|подпись]] правь только " +
-    "подпись. В стихах и песнях никогда не меняй разбивку на строки: строка без точки в конце, " +
-    "тире вместо запятой или строчная буква в начале строки — это авторский приём, а не ошибка.",
+    "==выделения==, блоки кода вместе с содержимым, ссылки, формулы и #теги. Ни одной буквы не " +
+    "меняй внутри [[двойных квадратных скобок]] — это имена файлов, и правка рвёт связи между " +
+    "заметками; в ссылке вида [[файл|подпись]] правь только подпись. Разбивку на строки не меняй " +
+    "никогда: сколько строк пришло — столько верни, вместе с пустыми строками между ними. Если " +
+    "строка кончается двумя пробелами, верни её тоже с двумя пробелами — это жёсткий перенос " +
+    "markdown, на нём держатся стихи и песни, и без него строки слипнутся в абзац.",
   promptOnlyText:
     "В ответе — ТОЛЬКО получившийся текст, ровно в том виде, в каком он должен лежать в заметке: " +
     "без предисловий и послесловий, без пояснений к правкам, без вариантов на выбор, без кавычек " +
