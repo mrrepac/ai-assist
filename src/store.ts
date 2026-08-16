@@ -10,6 +10,7 @@ import {
   AiAssistSettings,
   HistoryItem,
   StoredData,
+  StoredHistory,
   mergeSettings,
 } from "./types";
 
@@ -52,11 +53,13 @@ export function readStore(raw: unknown): StoreRead {
   if (typeof raw !== "object" || Array.isArray(raw)) return blank("broken");
 
   const obj = raw as Record<string, unknown>;
-  const wrapped = !!obj.settings && typeof obj.settings === "object";
+  const wrapped = !!obj.settings && typeof obj.settings === "object" && !Array.isArray(obj.settings);
   if (!wrapped) {
     // Номер формата есть, а настроек нет ни в обёртке, ни в корне — это наш
-    // файл, и он испорчен.
-    if ("schemaVersion" in obj) return blank("broken");
+    // файл, и он испорчен. Ключ settings, который не оказался объектом
+    // (например, массив), — та же порча: это не старый формат без обёртки,
+    // а попытка обёртки, которую нечем прочитать.
+    if ("schemaVersion" in obj || "settings" in obj) return blank("broken");
     // Настройки в корне — формат до появления обёртки. Беречь на верхнем
     // уровне нечего: там лежат сами настройки.
     return { settings: mergeSettings(obj), rest: {}, state: "ok" };
@@ -79,4 +82,36 @@ export function writeStore(
   // Незнакомые поля идут первыми: своё они перебить не должны, а вот пропасть
   // им нельзя — их написала версия новее, и на второй машине их ждут на месте.
   return { ...rest, schemaVersion: SCHEMA, settings };
+}
+
+export interface HistoryRead {
+  items: HistoryItem[];
+  broken: boolean;
+}
+
+/**
+ * Только записи: не-объект в ленте уронил бы отрисовку панели, а прежний код
+ * доверял любому массиву вслепую.
+ */
+function keepItems(raw: unknown[]): HistoryItem[] {
+  return raw.filter(
+    (item): item is HistoryItem => !!item && typeof item === "object" && !Array.isArray(item),
+  );
+}
+
+/**
+ * Лента из файла. Голый массив — формат версии 0, он же лежит у всех, кто
+ * поставил плагин до этой версии.
+ */
+export function readHistory(raw: unknown): HistoryRead {
+  if (Array.isArray(raw)) return { items: keepItems(raw), broken: false };
+  if (raw && typeof raw === "object") {
+    const items = (raw as { items?: unknown }).items;
+    if (Array.isArray(items)) return { items: keepItems(items), broken: false };
+  }
+  return { items: [], broken: true };
+}
+
+export function writeHistoryFile(items: HistoryItem[]): StoredHistory {
+  return { schemaVersion: SCHEMA, items };
 }

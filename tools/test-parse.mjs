@@ -45,7 +45,7 @@ const { fitSize, isImagePath, isAttachablePath, embeddedFiles, pastedName, stamp
 const { isPdfPath, joinItems, tidy, clipPages } = await load("src/pdf.ts", "pdf");
 const { mergeSettings, providerOf, streamAvailable, streamAllowed, configFor, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank, toolsAllowed, builtinModels, activeConfig } = await load("src/types.ts", "types");
 const { chatToMarkdown } = await load("src/chatnote.ts", "chatnote");
-const { SCHEMA, readStore, writeStore } = await load("src/store.ts", "store");
+const { SCHEMA, readStore, writeStore, readHistory, writeHistoryFile } = await load("src/store.ts", "store");
 const { stripCitations } = await load("src/cite.ts", "cite");
 const { parseCall, runCall } = await load("src/tools.ts", "tools");
 const { diffWords } = await load("src/diff.ts", "diff");
@@ -1330,6 +1330,18 @@ check(
   readStore({ schemaVersion: SCHEMA + 1, settings: { futureThing: "keep" } }).settings.futureThing,
   "keep",
 );
+check("массив вместо настроек — битый", readStore({ settings: [1, 2, 3] }).state, "broken");
+
+// ——— store: history.json ———
+// Своё имя, не talk — оно уже занято блоком «разговор в заметку» выше.
+const historyTalk = [{ role: "user", content: "привет" }];
+check("голый массив — формат версии 0", readHistory(historyTalk), { items: historyTalk, broken: false });
+check("обёртка с номером", readHistory({ schemaVersion: SCHEMA, items: historyTalk }), { items: historyTalk, broken: false });
+check("объект без записей — читать нечего", readHistory({ schemaVersion: SCHEMA }), { items: [], broken: true });
+check("строка вместо ленты", readHistory("[]"), { items: [], broken: true });
+check("ничего вместо ленты", readHistory(null), { items: [], broken: true });
+check("мусор внутри отсеивается", readHistory([null, 1, "x", [], historyTalk[0]]), { items: historyTalk, broken: false });
+check("пишем с номером формата", writeHistoryFile(historyTalk), { schemaVersion: SCHEMA, items: historyTalk });
 
 console.log(`\n${pass} прошло, ${fail} упало`);
 process.exit(fail ? 1 : 0);
