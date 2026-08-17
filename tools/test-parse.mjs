@@ -1454,6 +1454,9 @@ check("чужая лента цела", feed3.length, 1);
 // только то, что с неё и взяли» проверяется здесь, а не на живом Obsidian.
 const img = { id: "a1", name: "снимок.png", mime: "image/png" };
 const other = { id: "a2", name: "другой.png", mime: "image/png" };
+// Подсказки приходят в план уже переведёнными, поэтому в тестах они —
+// узнаваемые метки: так видно, какая из них попала в системный промпт.
+const hints = { tools: "ХИНТ-И", plain: "ХИНТ", noteHere: "ЗАМЕТКА-ВИДНА", noteHidden: "ЗАМЕТКА-СКРЫТА" };
 const baseInput = (over = {}) => ({
   text: "привет",
   opts: {},
@@ -1462,6 +1465,7 @@ const baseInput = (over = {}) => ({
   chip: { quote: null, files: [] },
   note: null,
   provider: "deepseek",
+  hints,
   ...over,
 });
 
@@ -1588,6 +1592,85 @@ check(
   planRequest(baseInput({ opts: { display: "**Исправить орфографию**" } })).text,
   "привет",
 );
+
+// ——— planRequest: промпт, заметка, прошлое ———
+// Системный промпт склеен из четырёх кусков, и в приватном чате не должно
+// уехать ни одного своего: ни подсказки про панель, ни промпта из настроек.
+const ctxNote = { path: "Заметки/План.md", text: "текст заметки", clipped: false };
+const ownPrompt = defaultSettings().systemPrompt.trim();
+
+check(
+  "обычный заход: подсказка, оговорка про заметку, промпт настроек",
+  planRequest(baseInput({ note: ctxNote })).system,
+  "ХИНТ-И\n\nЗАМЕТКА-ВИДНА\n\n" + ownPrompt,
+);
+check(
+  "заметка не приложена — так и сказано",
+  planRequest(baseInput()).system,
+  "ХИНТ-И\n\nЗАМЕТКА-СКРЫТА\n\n" + ownPrompt,
+);
+check(
+  "инструменты выключены — оговорки про заметку нет",
+  planRequest(baseInput({ settings: { ...defaultSettings(), tools: false } })).system,
+  "ХИНТ\n\n" + ownPrompt,
+);
+check(
+  "приватный чат: ничего своего",
+  planRequest(baseInput({ settings: { ...defaultSettings(), privateChat: true } })).system,
+  "",
+);
+check(
+  "промпт действия приписывается последним",
+  planRequest(baseInput({ opts: { fromEditor: true, system: "правь текст" } })).system,
+  "ХИНТ\n\n" + ownPrompt + "\n\nправь текст",
+);
+
+check("заметка уезжает контекстом", planRequest(baseInput({ note: ctxNote })).note, ctxNote);
+check(
+  "действию из заметки заметка сверху не нужна",
+  planRequest(baseInput({ note: ctxNote, opts: { fromEditor: true } })).note,
+  null,
+);
+check(
+  "в приватном чате заметка не уходит",
+  planRequest(baseInput({ note: ctxNote, settings: { ...defaultSettings(), privateChat: true } })).note,
+  null,
+);
+check(
+  "обрезанную заметку называют обрезанной",
+  planRequest(baseInput({ note: { ...ctxNote, clipped: true } })).notices,
+  ["noteClipped"],
+);
+check("целая заметка молчит", planRequest(baseInput({ note: ctxNote })).notices, []);
+
+const olderAsk = { role: "user", content: "а до этого?" };
+const olderReply = { role: "assistant", content: "вот так" };
+check(
+  "прошлое уходит в контекст",
+  planRequest(baseInput({ history: [olderAsk, olderReply] })).past.map((m) => m.content),
+  ["а до этого?", "вот так"],
+);
+check(
+  "fresh: прошлого нет",
+  planRequest(baseInput({ history: [olderAsk, olderReply], opts: { fresh: true } })).past,
+  [],
+);
+
+// Картинки прошлых реплик уходят только с самой свежей: за каждую платят на
+// каждом вопросе, и разговор, начавшийся с фотографии, иначе возил бы её с
+// собой до конца.
+const askWithImage = { role: "user", content: "что тут?", attachments: [img] };
+check(
+  "картинки берутся у самой свежей реплики",
+  planRequest(baseInput({ history: [askWithImage, olderReply] })).mediaFrom,
+  0,
+);
+check(
+  "к вопросу приложили своё — прошлые картинки не нужны",
+  planRequest(baseInput({ history: [askWithImage], chip: { quote: null, files: [other] } })).mediaFrom,
+  -1,
+);
+check("в ленте без картинок брать нечего", planRequest(baseInput({ history: [olderAsk] })).mediaFrom, -1);
 
 console.log(`\n${pass} прошло, ${fail} упало`);
 process.exit(fail ? 1 : 0);

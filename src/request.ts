@@ -7,6 +7,7 @@
  * оказывалось неверным, а проверить их, не поднимая Obsidian, было нельзя.
  */
 import { ApiConfig } from "./api";
+import { contextWindow } from "./history";
 import {
   AiAssistSettings,
   Attachment,
@@ -62,7 +63,16 @@ export interface RequestInput {
   note: NoteContext | null;
   /** Имя провайдера выбранной модели. */
   provider: string;
+  /**
+   * Тексты подсказок, уже переведённые. Приходят входом, чтобы модуль не тянул
+   * i18n, а с ним moment из obsidian: решение о том, ЧТО сказать модели, — здесь,
+   * а на каком языке — не здесь.
+   */
+  hints: { tools: string; plain: string; noteHere: string; noteHidden: string };
 }
+
+/** Что панель скажет в ленте до того, как уйдёт запрос. */
+export type RequestNotice = "noteClipped";
 
 export interface RequestPlan {
   /** Реплика пользователя, как она ляжет в ленту. */
@@ -81,6 +91,15 @@ export interface RequestPlan {
   dismissQuote?: string;
   priv: boolean;
   canUseTools: boolean;
+  /** Склеенный системный промпт; пустой — системного сообщения не будет. */
+  system: string;
+  /** Заметка, которая реально уедет контекстом. */
+  note: NoteContext | null;
+  /** Прошлые реплики, влезшие в бюджет контекста. */
+  past: StoredChatMessage[];
+  /** Индекс в past, чьи вложения уедут; -1 — ничьи. */
+  mediaFrom: number;
+  notices: RequestNotice[];
 }
 
 export function planRequest(input: RequestInput): RequestPlan {
@@ -114,6 +133,41 @@ export function planRequest(input: RequestInput): RequestPlan {
   // четырёхсотой на каждый вопрос.
   const canUseTools = settings.tools && !opts.fromEditor && !priv && toolsAllowed(provider);
 
+  // Без объяснения, где она находится, модель на просьбу «вставь в заметку»
+  // отвечает лекцией о том, что у неё нет доступа к хранилищу. Умеет ли модель
+  // инструменты, заранее не знает никто — это выясняется отказом провайдера.
+  const hint = canUseTools ? input.hints.tools : input.hints.plain;
+
+  // «Отправлять заметку как контекст» — это про разговор в панели. Действие над
+  // выделенным уже сказало, над чем работать, и заметка сверху — лишние деньги
+  // и лишняя путаница: модель видит один и тот же текст дважды.
+  const note = opts.fromEditor || priv ? null : input.note;
+
+  // Видит ли модель заметку — половина того, что ей надо знать про инструменты.
+  // Без этой оговорки она лезет читать заметку на любой вопрос, даже когда он
+  // вовсе не про неё, а когда заметка уже приложена — читает её вторым разом,
+  // целым кругом запроса за те же деньги.
+  const reach = canUseTools ? (note ? input.hints.noteHere : input.hints.noteHidden) : "";
+  // В приватном чате не уходит ничего своего — ни объяснений про панель, ни
+  // общего промпта из настроек. Остаётся только промпт действия, но его в этом
+  // режиме и не бывает.
+  const own = priv ? [] : [hint, reach, settings.systemPrompt.trim()];
+  const system = [...own, opts.system?.trim()].filter(Boolean).join("\n\n");
+
+  const past = opts.fresh ? [] : contextWindow(input.history);
+  // Из прошлых реплик картинки уходят только с самой свежей: за каждую платят
+  // на каждом вопросе, и разговор, начавшийся с фотографии, иначе возил бы её с
+  // собой до конца. К этому вопросу приложили своё — прежние не нужны и
+  // подавно: спрашивают уже про новую.
+  const mediaFrom = files.length
+    ? -1
+    : past.reduce((at, m, i) => (m.attachments?.length ? i : at), -1);
+
+  const notices: RequestNotice[] = [];
+  // Ответ по началу длинной заметки выглядит точно так же, как ответ по всей, —
+  // про обрезку надо сказать вслух, иначе о ней никто не узнает.
+  if (note?.clipped) notices.push("noteClipped");
+
   // Реплику держим объектом: по нему кнопки под сообщением находят своё место в
   // ленте, как бы она ни менялась под ними.
   const ask: StoredChatMessage = {
@@ -130,5 +184,18 @@ export function planRequest(input: RequestInput): RequestPlan {
         : undefined,
   };
 
-  return { ask, text, files, clearFiles, dismissQuote: quote, priv, canUseTools };
+  return {
+    ask,
+    text,
+    files,
+    clearFiles,
+    dismissQuote: quote,
+    priv,
+    canUseTools,
+    system,
+    note,
+    past,
+    mediaFrom,
+    notices,
+  };
 }
