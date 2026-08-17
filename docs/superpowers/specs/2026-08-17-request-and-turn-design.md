@@ -111,7 +111,7 @@ export interface RequestInput {
 export interface RequestPlan {
   ask: StoredChatMessage;   // реплика пользователя, как она ляжет в ленту
   files: Attachment[];      // вложения этого вопроса
-  clearChip: boolean;       // снимать ли с плашки фрагмент и картинки
+  clearFiles: boolean;      // снимать ли картинки с плашки
   dismissQuote?: string;    // фрагмент, о котором уже спросили
   priv: boolean;
   canUseTools: boolean;
@@ -129,7 +129,9 @@ export interface RequestPlan {
   плашки; в приватном чате — никогда;
 - вложения: явные `opts.files`, иначе с плашки, но `fromEditor` плашку не
   смотрит вовсе;
-- `clearChip` — только когда взяли с плашки и заход не из редактора;
+- `clearFiles` — только когда картинки взяли с плашки и заход не из редактора;
+  фрагмент с плашки снимается всегда, каким бы ни был заход (так сегодня и
+  работает: `this.attach(null)` стоит без условия);
 - приватность: `privateChat && !fromEditor`;
 - инструменты: настройка, `!fromEditor`, `!priv` и `toolsAllowed(provider)`;
 - системный промпт: подсказка про панель, оговорка «видна ли модели заметка»,
