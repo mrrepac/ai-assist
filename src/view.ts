@@ -1810,7 +1810,7 @@ export class ChatView extends ItemView {
         }
 
         if (answer.trim()) {
-          // Уведомление «вернуть разговор» (snapshot в freshTalk/clearChat)
+          // Уведомление «вернуть разговор» (snapshot в freshTalk/newChat)
           // могло сработать, пока ответ ещё шёл: history.length = 0 плюс
           // push(...kept) меняют весь массив разом, и ask в нём больше нет.
           // Класть ответ в чужую (или уже не открытую) ленту нельзя — та же
