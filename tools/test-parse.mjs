@@ -46,6 +46,7 @@ const { isPdfPath, joinItems, tidy, clipPages } = await load("src/pdf.ts", "pdf"
 const { mergeSettings, providerOf, streamAvailable, streamAllowed, configFor, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank, toolsAllowed, builtinModels, activeConfig } = await load("src/types.ts", "types");
 const { chatToMarkdown } = await load("src/chatnote.ts", "chatnote");
 const { SCHEMA, readStore, writeStore, readHistory, writeHistoryFile, bakName } = await load("src/store.ts", "store");
+const { beginTurn, ownsTurn, rollbackTurn } = await load("src/turn.ts", "turn");
 const { stripCitations } = await load("src/cite.ts", "cite");
 const { parseCall, runCall } = await load("src/tools.ts", "tools");
 const { diffWords } = await load("src/diff.ts", "diff");
@@ -1401,6 +1402,50 @@ check(
   bakName("data.json", true, "2026-08-17T02:15:33"),
   "data.json.2026-08-17T02-15-33.bak",
 );
+
+// ——— turn: чей это заход ———
+// Пока идёт ответ, ленту могли увести: очисткой, новым разговором, возвратом
+// по уведомлению, снятием самого вопроса. Ответ, дописанный после любого из
+// них, встал бы посреди чужого разговора — и в ленте, и в контексте
+// следующего запроса.
+const mkAsk = (text) => ({ role: "user", content: text });
+const mkLog = (id) => ({ kind: "action", id, action: "Исправить орфографию", status: "done", content: "" });
+
+const feed = [mkAsk("первый"), { role: "assistant", content: "ответ" }];
+const ask1 = mkAsk("второй");
+const turn1 = beginTurn(feed, ask1);
+check("вопрос лёг в ленту", feed.length, 3);
+check("место захода запомнено", turn1.startAt, 2);
+check("лента принадлежит заходу", ownsTurn(feed, turn1), true);
+
+const cleared = [];
+check("после очистки лента не наша", ownsTurn(cleared, turn1), false);
+
+const returned = [mkAsk("первый")];
+check("после возврата ленты по уведомлению — не наша", ownsTurn(returned, turn1), false);
+
+// откат захода: кнопка «Повторить» после ошибки
+const feed2 = [mkAsk("первый")];
+const ask2 = mkAsk("второй");
+const turn2 = beginTurn(feed2, ask2);
+feed2.push({ role: "assistant", content: "половина" }, mkLog("7"));
+check("заход снят целиком", rollbackTurn(feed2, turn2), true);
+// Записи журнала опознаём по kind, а не по «есть ли id»: content у них пустой,
+// и ?? такую строку пропускает — проверка ловила бы не то.
+check(
+  "остался только прежний разговор и журнал",
+  feed2.map((m) => (m.kind === "action" ? m.id : m.content)),
+  ["первый", "7"],
+);
+
+// правка выделенного шла своим чередом — её запись к заходу отношения не имеет
+const feed3 = [mkAsk("первый")];
+const ask3 = mkAsk("второй");
+const turn3 = beginTurn(feed3, ask3);
+feed3.length = 0;
+feed3.push(mkAsk("чужой разговор"));
+check("чужую ленту откат не трогает", rollbackTurn(feed3, turn3), false);
+check("чужая лента цела", feed3.length, 1);
 
 console.log(`\n${pass} прошло, ${fail} упало`);
 process.exit(fail ? 1 : 0);

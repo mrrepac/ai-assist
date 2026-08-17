@@ -89,7 +89,13 @@ const ask2 = mkAsk("второй");
 const turn2 = beginTurn(feed2, ask2);
 feed2.push({ role: "assistant", content: "половина" }, mkLog("7"));
 check("заход снят целиком", rollbackTurn(feed2, turn2), true);
-check("остался только прежний разговор и журнал", feed2.map((m) => m.content ?? m.id), ["первый", "7"]);
+// Записи журнала опознаём по kind, а не по «есть ли id»: content у них пустой,
+// и ?? такую строку пропускает — проверка ловила бы не то.
+check(
+  "остался только прежний разговор и журнал",
+  feed2.map((m) => (m.kind === "action" ? m.id : m.content)),
+  ["первый", "7"],
+);
 
 // правка выделенного шла своим чередом — её запись к заходу отношения не имеет
 const feed3 = [mkAsk("первый")];
