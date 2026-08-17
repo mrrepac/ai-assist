@@ -1,7 +1,7 @@
 {
   "id": "ai-assist",
   "name": "RU AI Assist",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "minAppVersion": "1.8.7",
   "description": "Чат с ИИ в боковой панели: можно спросить и о картинке. Плюс правка выделенного текста прямо в заметке. Провайдеры, доступные из России без VPN: DeepSeek, Polza.ai, ChadGPT, GPTunnel, Perplexity, локальные модели. AI chat with images and rewriting.",
   "author": "mrrepac",
