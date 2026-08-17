@@ -39,11 +39,17 @@ import {
   messageText,
 } from "./history";
 import { isPdfPath, pdfText } from "./pdf";
-import { SubmitOptions } from "./request";
+import {
+  ResolvedMedia,
+  SubmitOptions,
+  assembleMessages,
+  planRequest,
+} from "./request";
 import { t } from "./i18n";
 import { ImageSuggestModal, ModelSuggestModal } from "./modals";
 import { RECENT_LIMIT, grouped } from "./quickmenu";
 import { ParsedCall, ToolHost, parseCall, runCall, toolSpecs } from "./tools";
+import { Turn, beginTurn, ownsTurn, rollbackTurn } from "./turn";
 import {
   ActionEntry,
   AiAssistSettings,
@@ -62,7 +68,6 @@ import {
   providerRank,
   streamAllowed,
   switchProvider,
-  toolsAllowed,
 } from "./types";
 
 /** Сколько раз подряд модель может ходить за инструментами в одном запросе. */
@@ -74,9 +79,6 @@ const MAX_TOOL_STEPS = 5;
  * приложить можно только по недосмотру.
  */
 const MAX_FILES = 4;
-
-/** Приписка модели к обрезанной заметке — по-английски, как и весь служебный текст. */
-const CLIPPED = "[The note is longer than this — only the beginning is shown.]";
 
 /** Реплика пользователя: не ответ модели и не запись журнала правок. */
 function isAsk(item: HistoryItem): boolean {
@@ -1575,141 +1577,58 @@ export class ChatView extends ItemView {
   async submit(text: string, opts: SubmitOptions = {}): Promise<void> {
     if (this.busy) this.stop();
 
-    // С какого места история принадлежит этому заходу: по нему кнопка «Ещё раз»
-    // отматывает всё сказанное, включая круги инструментов.
-    const startAt = this.host.history.length;
     // Чем спрашиваем. Обычно тем, что в настройках, но «ещё раз» умеет позвать
     // другую модель на один запрос — и подпись под ответом должна сойтись с ней,
     // а не с той, что осталась в шапке.
     const cfg = opts.config ?? this.host.chatConfig();
-    // Прикреплённое выделение уходит с вопросом и тут же снимается: следующий
-    // вопрос — уже про своё, если не выделить заново. Явный null в опциях
-    // означает «без фрагмента» и плашку не смотрит вовсе. Приватный чат не
-    // отправляет фрагмент ни при каких условиях — последняя застава на пути
-    // всего, что могло уцелеть от прошлого разговора.
-    const asked = opts.quote === undefined ? this.attached?.text : opts.quote;
-    const quote = (this.host.settings.privateChat ? null : asked) ?? undefined;
-    // Картинки уходят с этим вопросом и снимаются с плашки — как фрагмент.
-    // Приватности они не касаются: картинку приносят в чат руками, и это уже
-    // сказанное «отправь», а не подхваченное само собой из заметки.
-    //
-    // Действие из заметки плашку не смотрит вовсе и картинок с неё не забирает:
-    // приложенная для следующего вопроса, она уехала бы с чужим запросом — за
-    // те же деньги и без спроса.
-    const files = (opts.files === undefined ? (opts.fromEditor ? [] : this.files) : opts.files) ?? [];
-    // С плашки снимаем только то, что с неё и взяли. Картинки, переданные явно
-    // («спросить заново», «повторить» после ошибки), к плашке отношения не
-    // имеют: приложенное там ждёт следующего вопроса, и стереть его молча —
-    // потерять чужую работу, а заодно оставить её висеть в памяти сеанса
-    // навсегда: в ленту она не попала, и забыть её будет уже некому.
-    if (opts.files === undefined && !opts.fromEditor) this.files = [];
+    // Что уедет модели, решает request.ts — панель только исполняет решённое.
+    const plan = planRequest({
+      text,
+      opts,
+      settings: this.host.settings,
+      history: this.host.history,
+      chip: { quote: this.attached?.text ?? null, files: this.files },
+      note: this.host.noteContext(),
+      provider: providerOf(cfg),
+      hints: {
+        tools: t("chatSystemHintTools"),
+        plain: t("chatSystemHint"),
+        noteHere: t("chatToolsNoteHere"),
+        noteHidden: t("chatToolsNoteHidden"),
+      },
+    });
+
+    if (plan.clearFiles) this.files = [];
     this.attach(null);
     // Про этот кусок уже спросили, и он остался в ленте. Выделение в заметке
     // никуда не делось — без этого плашка тут же вернулась бы, и фрагмент уехал
     // бы вторым разом за те же деньги.
-    if (quote) this.dismissed = quote;
+    if (plan.dismissQuote) this.dismissed = plan.dismissQuote;
     // Вопрос уходит — значит картинкам пора на диск, если так велено настройкой.
     // Путь проставляется до того, как реплика ляжет в ленту: он в ней и хранится.
-    await this.saveFiles(files);
+    await this.saveFiles(plan.files);
 
-    // Реплику держим объектом: по нему кнопки под сообщением находят своё место
-    // в ленте, как бы она ни менялась под ними.
-    const ask: StoredChatMessage = {
-      role: "user",
-      content: opts.display ?? text,
-      quote,
-      attachments: files.length ? files : undefined,
-      // Показано не то, что уходит в запрос, — запоминаем настоящий вопрос
-      // вместе с его системным промптом, иначе «спросить заново» отправит
-      // подпись действия.
-      resend:
-        opts.display || opts.system || opts.fresh
-          ? { text, system: opts.system, fresh: opts.fresh }
-          : undefined,
-    };
-    this.host.history.push(ask);
-    const userEl = this.addMessage("user", ask.content, quote, ask);
+    // Вопрос ложится в ленту, и заход становится её хозяином — пока не увели.
+    const turn = beginTurn(this.host.history, plan.ask);
+    const userEl = this.addMessage("user", plan.ask.content, plan.ask.quote, plan.ask);
     userEl.scrollIntoView({ block: "end" });
 
-    const messages: ChatMessage[] = [];
-    // Без объяснения, где она находится, модель на просьбу «вставь в заметку»
-    // отвечает лекцией о том, что у неё нет доступа к хранилищу. Умеет ли модель
-    // инструменты, заранее не знает никто — это выясняется отказом провайдера,
-    // и на такой отказ ApiError отвечает подсказкой.
-    // Действие, запущенное из заметки в режиме «показать в панели», — это
-    // просьба ответить, а не править. С инструментами «перескажи главу»
-    // кончалось тем, что модель сама клала пересказ на место главы.
-    // Приватный чат: модель не знает ни про Obsidian, ни про заметку — разговор
-    // как в веб-чате провайдера. На действие из заметки не распространяется:
-    // оно само про неё, и выключать там нечего.
-    const priv = this.host.settings.privateChat && !opts.fromEditor;
-    // Инструментов может не быть и у самого провайдера: Perplexity ищет в вебе и
-    // отвечает, а function calling не умеет вовсе — запрос с ними отлетел бы
-    // четырёхсотой на каждый вопрос.
-    const canUseTools =
-      this.host.settings.tools && !opts.fromEditor && !priv && toolsAllowed(providerOf(cfg));
-    const hint = canUseTools ? t("chatSystemHintTools") : t("chatSystemHint");
-
-    // «Отправлять заметку как контекст» — это про разговор в панели. Действие
-    // над выделенным уже сказало, над чем работать, и заметка сверху — лишние
-    // деньги и лишняя путаница: модель видит один и тот же текст дважды.
-    const note = opts.fromEditor || priv ? null : this.host.noteContext();
-
-    // Видит ли модель заметку — половина того, что ей надо знать про инструменты.
-    // Без этой оговорки она лезет читать заметку на любой вопрос, даже когда он
-    // вовсе не про неё, а когда заметка уже приложена — читает её вторым разом,
-    // целым кругом запроса за те же деньги.
-    const reach = canUseTools ? (note ? t("chatToolsNoteHere") : t("chatToolsNoteHidden")) : "";
-    // В приватном чате не уходит ничего своего — ни объяснений про панель, ни
-    // общего промпта из настроек. Остаётся только промпт действия, но его в
-    // этом режиме и не бывает.
-    const own = priv ? [] : [hint, reach, this.host.settings.systemPrompt.trim()];
-    const system = [...own, opts.system?.trim()].filter(Boolean).join("\n\n");
-    if (system) messages.push({ role: "system", content: system });
-
-    if (note) {
-      messages.push({
-        role: "system",
-        content: `Note "${note.path}":\n\n${note.text}` + (note.clipped ? "\n\n" + CLIPPED : ""),
-      });
-      // Ответ по началу длинной заметки выглядит точно так же, как ответ по всей,
-      // — про обрезку надо сказать вслух, иначе о ней никто не узнает.
-      if (note.clipped) {
+    for (const notice of plan.notices) {
+      // Ответ по началу длинной заметки выглядит точно так же, как ответ по
+      // всей, — про обрезку надо сказать вслух, иначе о ней никто не узнает.
+      if (notice === "noteClipped") {
         this.listEl.createDiv({ cls: "ai-notice", text: t("chatContextClipped") });
       }
     }
 
-    if (!opts.fresh) {
-      // История без последней реплики — её кладём отдельно, уже настоящим текстом.
-      const past = contextWindow(this.host.history.slice(0, -1));
-      // Из прошлых реплик картинки уходят только с самой свежей: за каждую
-      // платят на каждом вопросе, и разговор, начавшийся с фотографии, иначе
-      // возил бы её с собой до конца. Про остальные модели говорят словами —
-      // иначе разговор выглядит как вопросы о пустоте.
-      // К этому вопросу приложили своё — прежние картинки не нужны и подавно:
-      // спрашивают уже про новую.
-      const lastWithFiles = files.length
-        ? -1
-        : past.reduce((at, m, i) => (m.attachments?.length ? i : at), -1);
-      for (const [i, m] of past.entries()) {
-        // Документ той же меркой, что картинка: он тоже стоит денег на каждом
-        // вопросе, и возить сорок тысяч знаков до конца разговора нельзя.
-        const own = i === lastWithFiles ? (m.attachments ?? []) : [];
-        const seen = await this.imagesFor(own);
-        const read = await this.docsFor(own);
-        messages.push({ role: m.role, content: messageContent(m, seen, read) });
-      }
-    }
-    const images = await this.imagesFor(files);
-    const docs = await this.docsFor(files);
-    messages.push({
-      role: "user",
-      content: messageContent(
-        { role: "user", content: text, quote, attachments: files },
-        images,
-        docs,
-      ),
-    });
+    // Единственное, что требует диска: вложения читает панель — у неё и
+    // хранилище, и память сеанса, — а какие именно, ей уже сказал план.
+    const pastFiles = plan.mediaFrom >= 0 ? (plan.past[plan.mediaFrom].attachments ?? []) : [];
+    const media: ResolvedMedia = {
+      own: { images: await this.imagesFor(plan.files), docs: await this.docsFor(plan.files) },
+      past: { images: await this.imagesFor(pastFiles), docs: await this.docsFor(pastFiles) },
+    };
+    const messages = assembleMessages(plan, media);
 
     // Локальная ссылка: stop() обнуляет this.controller, а в catch ещё нужно
     // знать, оборвали запрос или он упал сам.
@@ -1744,7 +1663,7 @@ export class ChatView extends ItemView {
           stream: this.host.settings.stream && streamAllowed(providerOf(cfg)),
           signal: controller.signal,
           wantUsage: this.host.settings.showUsage,
-          tools: canUseTools ? toolSpecs() : undefined,
+          tools: plan.canUseTools ? toolSpecs() : undefined,
           onReasoning: (chunk) => {
             reasoning += chunk;
             if (!reasoningEl) reasoningEl = this.addReasoningBlock(bubble);
@@ -1771,7 +1690,7 @@ export class ChatView extends ItemView {
         // что успело прийти: без этой проверки оборванный ответ шёл дальше как
         // целый — в ленту, а с ним и на следующий круг инструментов.
         if (controller.signal.aborted) {
-          await this.keepPartial(bubble, body, answer, reasoning, controller, ask, cfg.model);
+          await this.keepPartial(bubble, body, answer, reasoning, controller, turn, cfg.model);
           new Notice(t("aborted"));
           return;
         }
@@ -1797,10 +1716,9 @@ export class ChatView extends ItemView {
         if (answer.trim()) {
           // Уведомление «вернуть разговор» (snapshot в freshTalk/newChat)
           // могло сработать, пока ответ ещё шёл: history.length = 0 плюс
-          // push(...kept) меняют весь массив разом, и ask в нём больше нет.
-          // Класть ответ в чужую (или уже не открытую) ленту нельзя — та же
-          // проверка, что и в keepPartial ниже.
-          const owned = this.host.history.includes(ask);
+          // push(...kept) меняют весь массив разом, и вопроса в ней больше нет.
+          // Класть ответ в чужую (или уже не открытую) ленту нельзя.
+          const owned = ownsTurn(this.host.history, turn);
           const reply: StoredChatMessage = {
             role: "assistant",
             content: answer,
@@ -1863,7 +1781,7 @@ export class ChatView extends ItemView {
       const err = e instanceof ApiError ? e : new ApiError(String(e));
       body.removeClass("ai-streaming");
       if (err.aborted || controller.signal.aborted) {
-        await this.keepPartial(bubble, body, answer, reasoning, controller, ask, cfg.model);
+        await this.keepPartial(bubble, body, answer, reasoning, controller, turn, cfg.model);
         new Notice(t("aborted"));
       } else {
         body.empty();
@@ -1872,16 +1790,9 @@ export class ChatView extends ItemView {
         const retry = body.createEl("button", { cls: "ai-retry", text: t("chatRetry") });
         retry.onclick = () => {
           // Пока ошибка висела на экране, ленту могли и очистить, и увести в
-          // новый разговор. Тогда startAt показывает уже не на наш заход, и
-          // splice отрезал бы кусок чужого: повторяем только вопрос.
-          if (this.host.history[startAt] === ask) {
-            // Ошибка могла случиться и на втором круге инструментов — тогда сверху
-            // лежит не вопрос, а ответ или след правки. Снимаем весь заход целиком
-            // и перерисовываем ленту, чтобы она сошлась с историей.
-            const tail = this.host.history.splice(startAt);
-            // Правка выделенного могла идти своим чередом — к этому запросу она
-            // отношения не имеет, и её запись остаётся в ленте.
-            this.host.history.push(...tail.filter(isActionEntry));
+          // новый разговор — тогда откат не тронет ничего, и повторится только
+          // вопрос.
+          if (rollbackTurn(this.host.history, turn)) {
             this.host.persistHistory();
             this.repaint();
           }
@@ -1889,7 +1800,7 @@ export class ChatView extends ItemView {
           // без этого повтор уходил без куска заметки — молча и за те же деньги.
           // С картинками хуже вдвое: пока ошибка висела на экране, на плашку
           // могли положить новые — и повтор уехал бы с чужими вместо своих.
-          void this.submit(text, { ...opts, quote: quote ?? null, files });
+          void this.submit(text, { ...opts, quote: plan.ask.quote ?? null, files: plan.files });
         };
       }
     } finally {
@@ -1917,7 +1828,7 @@ export class ChatView extends ItemView {
     answer: string,
     reasoning: string,
     controller: AbortController,
-    ask: StoredChatMessage,
+    turn: Turn,
     model: string,
   ): Promise<void> {
     if (!answer.trim()) {
@@ -1928,7 +1839,7 @@ export class ChatView extends ItemView {
 
     let reply: StoredChatMessage | undefined;
     const current = this.controller === null || this.controller === controller;
-    if (current && this.host.history.includes(ask)) {
+    if (current && ownsTurn(this.host.history, turn)) {
       reply = { role: "assistant", content: answer, reasoning, model };
       this.host.history.push(reply);
       this.host.persistHistory();
