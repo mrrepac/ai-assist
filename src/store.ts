@@ -115,3 +115,17 @@ export function readHistory(raw: unknown): HistoryRead {
 export function writeHistoryFile(items: HistoryItem[]): StoredHistory {
   return { schemaVersion: SCHEMA, items };
 }
+
+/**
+ * Имя резервной копии непрочитанного файла. Первая копия получает простое
+ * имя рядом с оригиналом; если оно уже занято, — метку времени, чтобы старую
+ * копию не перезаписать. Двоеточия из метки вычищаются: Windows не даёт их в
+ * именах файлов, а `moment().format()` при желании их туда кладёт.
+ *
+ * Сама проверка «занято ли имя» — поход на диск, и живёт она в main.ts;
+ * здесь только то, что можно прогнать тестом без файловой системы.
+ */
+export function bakName(name: string, occupied: boolean, stamp: string): string {
+  if (!occupied) return `${name}.bak`;
+  return `${name}.${stamp.replace(/:/g, "-")}.bak`;
+}

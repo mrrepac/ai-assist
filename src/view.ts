@@ -713,7 +713,9 @@ export class ChatView extends ItemView {
    */
   private cut(from: number, to: number): void {
     const removed = this.host.history.splice(from, to - from);
-    this.host.history.splice(from, 0, ...removed.filter(isActionEntry));
+    // Правило «журнал правок остаётся» живёт в одном месте — dropTalk; так
+    // тест на dropTalk и держит в узде оба его применения разом.
+    this.host.history.splice(from, 0, ...dropTalk(removed));
     this.host.persistHistory();
     this.forgetSaved(removed);
     this.repaint();
@@ -1808,6 +1810,12 @@ export class ChatView extends ItemView {
         }
 
         if (answer.trim()) {
+          // Уведомление «вернуть разговор» (snapshot в freshTalk/clearChat)
+          // могло сработать, пока ответ ещё шёл: history.length = 0 плюс
+          // push(...kept) меняют весь массив разом, и ask в нём больше нет.
+          // Класть ответ в чужую (или уже не открытую) ленту нельзя — та же
+          // проверка, что и в keepPartial ниже.
+          const owned = this.host.history.includes(ask);
           const reply: StoredChatMessage = {
             role: "assistant",
             content: answer,
@@ -1817,9 +1825,12 @@ export class ChatView extends ItemView {
             sources: result.sources.length ? result.sources : undefined,
             truncated: result.truncated || undefined,
           };
-          this.host.history.push(reply);
+          if (owned) this.host.history.push(reply);
           await this.renderMarkdown(answer, body, reply.sources);
-          this.addFooter(bubble, answer, result.usage, reply);
+          this.addFooter(bubble, answer, result.usage, owned ? reply : undefined);
+          // Разговор могли не только увести, но и перерисовать при этом —
+          // тогда пузырь, в который писался ответ, остался вне документа.
+          if (!bubble.isConnected) this.repaint();
         } else if (result.toolCalls.length === 0) {
           body.setText(t("emptyReply"));
         } else {

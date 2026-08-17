@@ -280,9 +280,11 @@ const en = {
     "When Obsidian starts, the panel opens empty and yesterday's conversation is dropped. Save what you need to a note first.",
   setFreshAction: "A run from a note starts a new conversation",
   setFreshActionDesc:
-    "An action from the quick menu, a one-off prompt or “ask about the selection” clears the " +
-    "panel first, so the previous conversation is not paid for again. Edits already made stay " +
-    "in the log, and the cleared conversation comes back if you click the notice.",
+    "An action that answers in the panel — from the quick menu, a one-off prompt, or “ask " +
+    "about the selection” — clears it first, so the previous conversation is not paid for " +
+    "again. An action that edits the note directly (replace or append) leaves the " +
+    "conversation as it is. Edits already made stay in the log, and the cleared conversation " +
+    "comes back if you click the notice.",
   setPrivateModel: "The model for a private chat",
   setPrivateModelDesc:
     "A private chat is started to ask something that is not about the vault at all, and the " +
@@ -733,9 +735,11 @@ const ru: typeof en = {
     "При запуске Obsidian панель открывается пустой, вчерашний разговор не подхватывается. Что нужно — сохрани в заметку заранее.",
   setFreshAction: "Запуск из заметки начинает разговор заново",
   setFreshActionDesc:
-    "Действие из быстрого меню, разовый промпт или «спросить о выделенном» сначала очищают " +
-    "панель — за прежний разговор не приходится платить снова. Записи о сделанных правках " +
-    "остаются, а стёртый разговор возвращается нажатием по уведомлению.",
+    "Действие, отвечающее в панели, — из быстрого меню, разовый промпт или «спросить о " +
+    "выделенном» — сначала очищает её: за прежний разговор не приходится платить снова. " +
+    "Действие, которое правит заметку напрямую (замена или дописывание), разговора не " +
+    "касается. Записи о сделанных правках остаются, а стёртый разговор возвращается нажатием " +
+    "по уведомлению.",
   setPrivateModel: "Сетка приватного чата",
   setPrivateModelDesc:
     "Приватный чат заводят, чтобы спросить не про хранилище, и модель там обычно нужна другая — " +

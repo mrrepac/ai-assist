@@ -45,7 +45,7 @@ const { fitSize, isImagePath, isAttachablePath, embeddedFiles, pastedName, stamp
 const { isPdfPath, joinItems, tidy, clipPages } = await load("src/pdf.ts", "pdf");
 const { mergeSettings, providerOf, streamAvailable, streamAllowed, configFor, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank, toolsAllowed, builtinModels, activeConfig } = await load("src/types.ts", "types");
 const { chatToMarkdown } = await load("src/chatnote.ts", "chatnote");
-const { SCHEMA, readStore, writeStore, readHistory, writeHistoryFile } = await load("src/store.ts", "store");
+const { SCHEMA, readStore, writeStore, readHistory, writeHistoryFile, bakName } = await load("src/store.ts", "store");
 const { stripCitations } = await load("src/cite.ts", "cite");
 const { parseCall, runCall } = await load("src/tools.ts", "tools");
 const { diffWords } = await load("src/diff.ts", "diff");
@@ -1358,6 +1358,22 @@ check("строка вместо ленты", readHistory("[]"), { items: [], br
 check("ничего вместо ленты", readHistory(null), { items: [], broken: true });
 check("мусор внутри отсеивается", readHistory([null, 1, "x", [], historyTalk[0]]), { items: historyTalk, broken: false });
 check("пишем с номером формата", writeHistoryFile(historyTalk), { schemaVersion: SCHEMA, items: historyTalk });
+
+// ——— store: имя резервной копии ———
+// Занята ли соседняя .bak и сама метка времени — это поход на диск и часы,
+// он живёт в main.ts; здесь только чистая часть: как из этих двух фактов
+// собирается имя.
+check("имя свободно — простая копия", bakName("data.json", false, "2026-08-17T02-15-33"), "data.json.bak");
+check(
+  "имя занято — рядом ложится копия с меткой времени",
+  bakName("data.json", true, "2026-08-17T02-15-33"),
+  "data.json.2026-08-17T02-15-33.bak",
+);
+check(
+  "двоеточия в метке — не для Windows",
+  bakName("data.json", true, "2026-08-17T02:15:33"),
+  "data.json.2026-08-17T02-15-33.bak",
+);
 
 console.log(`\n${pass} прошло, ${fail} упало`);
 process.exit(fail ? 1 : 0);

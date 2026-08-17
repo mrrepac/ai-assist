@@ -32,7 +32,7 @@ import { askConfirm } from "./modals";
 import { QuickMenu, QuickScope, RECENT_LIMIT } from "./quickmenu";
 import { ReplaceResult } from "./tools";
 import { AiAssistSettingTab } from "./settings";
-import { readHistory, readStore, writeHistoryFile, writeStore } from "./store";
+import { bakName, readHistory, readStore, writeHistoryFile, writeStore } from "./store";
 import {
   ActionEntry,
   AiAssistSettings,
@@ -346,8 +346,12 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
 
   /**
    * Отложить копию непрочитанного файла, пока мы не написали поверх него свой.
-   * Существующую копию не трогаем: в ней настоящие ключи, а сегодняшний файл
-   * мог быть уже огрызком, и вторая попытка затёрла бы хорошее плохим.
+   * Старую копию не трогаем — не важно, цела она или это огрызок прерванной
+   * записи (кончилось место, файл был заблокирован): её существование больше
+   * не значит «копия уже есть, копировать не надо», а значит только «имя
+   * занято». Свежая копия в этом случае встаёт рядом, под соседним именем с
+   * меткой времени, и уведомление называет путь именно к ней — не к тому,
+   * что могло пролежать там неизвестно с какого сбоя.
    *
    * Расширение .bak выбрано не случайно: файлы плагина Obsidian синхронизирует
    * по точному списку (manifest.json, main.js, styles.css, data.json), и копия
@@ -356,11 +360,11 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   private async rescue(name: string): Promise<string | null> {
     const dir = this.manifest.dir;
     if (!dir) return null;
-    const to = `${dir}/${name}.bak`;
     try {
-      if (await this.app.vault.adapter.exists(to)) return to;
       const raw = await this.app.vault.adapter.read(`${dir}/${name}`);
       if (!raw) return null;
+      const occupied = await this.app.vault.adapter.exists(`${dir}/${name}.bak`);
+      const to = `${dir}/${bakName(name, occupied, moment().format("YYYY-MM-DDTHH-mm-ss-SSS"))}`;
       await this.app.vault.adapter.write(to, raw);
       return to;
     } catch {
@@ -420,7 +424,12 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
 
     // Вчерашний разговор не подхватываем: Obsidian открывается с чистой лентой.
     // Что стоило сохранить — уходит в заметку кнопкой в шапке панели.
-    if (this.settings.freshStart) {
+    //
+    // При битом data.json settings.freshStart — не выбор человека, а
+    // умолчание: свой файл мы не прочитали и не знаем, что там на самом деле
+    // стояло. Ломать исправную ленту ради настройки, которую мы, по сути,
+    // выдумали, не за что.
+    if (this.settings.freshStart && read.state !== "broken") {
       if (this.history.length > 0) {
         this.history = [];
         this.persistHistory();
@@ -542,8 +551,14 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       this.settingsTimer = null;
     }
     const read = readStore(await this.loadData());
-    // Разбирать нечего — своё в памяти целее того, что на диске.
-    if (read.state === "broken") return;
+    // «broken» — файл есть, а разобрать нечего: своё в памяти целее того,
+    // что на диске. «fresh» — файла не оказалось вовсе, и это не «первая
+    // установка», как для loadStore при старте, а исчезновение прямо сейчас
+    // — например, синхра сперва стирает файл, потом кладёт новый, и в это
+    // окно попал именно наш хук. Подставить сюда умолчания значило бы стереть
+    // ключи провайдеров ближайшей автозаписью. Идём дальше, только когда
+    // прочитали что-то настоящее.
+    if (read.state !== "ok" && read.state !== "ahead") return;
 
     // Черновик вопроса — про эту машину и эту секунду, чужой ему не указ.
     const draft = this.settings.draft;
