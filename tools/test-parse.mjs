@@ -47,7 +47,7 @@ const { mergeSettings, providerOf, streamAvailable, streamAllowed, configFor, sw
 const { chatToMarkdown } = await load("src/chatnote.ts", "chatnote");
 const { SCHEMA, readStore, writeStore, readHistory, writeHistoryFile, bakName } = await load("src/store.ts", "store");
 const { beginTurn, ownsTurn, rollbackTurn } = await load("src/turn.ts", "turn");
-const { planRequest } = await load("src/request.ts", "request");
+const { planRequest, assembleMessages } = await load("src/request.ts", "request");
 const { stripCitations } = await load("src/cite.ts", "cite");
 const { parseCall, runCall } = await load("src/tools.ts", "tools");
 const { diffWords } = await load("src/diff.ts", "diff");
@@ -1671,6 +1671,75 @@ check(
   -1,
 );
 check("в ленте без картинок брать нечего", planRequest(baseInput({ history: [olderAsk] })).mediaFrom, -1);
+
+// ——— assembleMessages: план становится запросом ———
+const emptyMedia = { own: { images: [], docs: [] }, past: { images: [], docs: [] } };
+check(
+  "системное сообщение, потом вопрос",
+  assembleMessages(planRequest(baseInput()), emptyMedia).map((m) => m.role),
+  ["system", "user"],
+);
+check(
+  "пустой системный промпт не отправляется",
+  assembleMessages(
+    planRequest(baseInput({ settings: { ...defaultSettings(), privateChat: true } })),
+    emptyMedia,
+  ).map((m) => m.role),
+  ["user"],
+);
+const noteMsgs = assembleMessages(planRequest(baseInput({ note: ctxNote })), emptyMedia);
+check("заметка идёт отдельным системным сообщением", noteMsgs.length, 3);
+check(
+  "заметка названа по имени файла",
+  noteMsgs[1].content,
+  'Note "Заметки/План.md":\n\nтекст заметки',
+);
+check(
+  "обрезанной заметке дописано, что она обрезана",
+  assembleMessages(
+    planRequest(baseInput({ note: { ...ctxNote, clipped: true } })),
+    emptyMedia,
+  )[1].content.endsWith("[The note is longer than this — only the beginning is shown.]"),
+  true,
+);
+check(
+  "прошлое встаёт между промптом и вопросом",
+  assembleMessages(
+    planRequest(baseInput({ history: [olderAsk, olderReply] })),
+    emptyMedia,
+  ).map((m) => m.role),
+  ["system", "user", "assistant", "user"],
+);
+// Картинка уходит массивом кусков: строкой её понимают не все модели, и там,
+// где картинок нет, контент обязан остаться строкой.
+check(
+  "картинка уходит кусками, а не строкой",
+  Array.isArray(
+    assembleMessages(planRequest(baseInput({ chip: { quote: null, files: [img] } })), {
+      own: { images: ["data:image/png;base64,AAA"], docs: [] },
+      past: { images: [], docs: [] },
+    }).at(-1).content,
+  ),
+  true,
+);
+check(
+  "документ уходит текстом",
+  assembleMessages(planRequest(baseInput()), {
+    own: { images: [], docs: [{ name: "счёт.pdf", text: "строка", clipped: false }] },
+    past: { images: [], docs: [] },
+  })
+    .at(-1)
+    .content.startsWith('[Document "счёт.pdf"]'),
+  true,
+);
+check(
+  "модели уходит текст вопроса, а не подпись действия",
+  assembleMessages(
+    planRequest(baseInput({ opts: { display: "**Исправить орфографию**" } })),
+    emptyMedia,
+  ).at(-1).content,
+  "привет",
+);
 
 console.log(`\n${pass} прошло, ${fail} упало`);
 process.exit(fail ? 1 : 0);

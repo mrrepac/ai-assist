@@ -6,8 +6,8 @@
  * плашки. Отдельно от панели — потому что каждое из этих решений когда-нибудь
  * оказывалось неверным, а проверить их, не поднимая Obsidian, было нельзя.
  */
-import { ApiConfig } from "./api";
-import { contextWindow } from "./history";
+import { ApiConfig, ChatMessage } from "./api";
+import { AttachedDoc, contextWindow, messageContent } from "./history";
 import {
   AiAssistSettings,
   Attachment,
@@ -73,6 +73,20 @@ export interface RequestInput {
 
 /** Что панель скажет в ленте до того, как уйдёт запрос. */
 export type RequestNotice = "noteClipped";
+
+/** Заметка длиннее предела уходит началом — и об этом сказано модели. */
+const CLIPPED = "[The note is longer than this — only the beginning is shown.]";
+
+/**
+ * Вложения, уже прочитанные панелью: картинки адресами `data:`, документы
+ * текстом. Читать их умеет только она — там и хранилище, и память сеанса.
+ */
+export interface ResolvedMedia {
+  /** Вложения этого вопроса. */
+  own: { images: string[]; docs: AttachedDoc[] };
+  /** Вложения реплики `plan.past[plan.mediaFrom]`; пусто, если её нет. */
+  past: { images: string[]; docs: AttachedDoc[] };
+}
 
 export interface RequestPlan {
   /** Реплика пользователя, как она ляжет в ленту. */
@@ -198,4 +212,42 @@ export function planRequest(input: RequestInput): RequestPlan {
     mediaFrom,
     notices,
   };
+}
+
+/**
+ * План становится запросом. Порядок сообщений тот же, в каком его читает
+ * модель: сначала кто она и что ей видно, потом заметка, потом разговор, и
+ * последним — сам вопрос.
+ */
+export function assembleMessages(plan: RequestPlan, media: ResolvedMedia): ChatMessage[] {
+  const messages: ChatMessage[] = [];
+  if (plan.system) messages.push({ role: "system", content: plan.system });
+
+  if (plan.note) {
+    messages.push({
+      role: "system",
+      content:
+        `Note "${plan.note.path}":\n\n${plan.note.text}` + (plan.note.clipped ? "\n\n" + CLIPPED : ""),
+    });
+  }
+
+  const nothing = { images: [], docs: [] };
+  for (const [i, m] of plan.past.entries()) {
+    // Документ той же меркой, что картинка: он тоже стоит денег на каждом
+    // вопросе, и возить сорок тысяч знаков до конца разговора нельзя.
+    const own = i === plan.mediaFrom ? media.past : nothing;
+    messages.push({ role: m.role, content: messageContent(m, own.images, own.docs) });
+  }
+
+  messages.push({
+    role: "user",
+    // Модели уходит настоящий текст, а не подпись действия, которой реплика
+    // подписана в ленте, — потому план и несёт их порознь.
+    content: messageContent(
+      { role: "user", content: plan.text, quote: plan.ask.quote, attachments: plan.files },
+      media.own.images,
+      media.own.docs,
+    ),
+  });
+  return messages;
 }
