@@ -4,6 +4,16 @@ import { DiffSegment } from "./diff";
 import { t } from "./i18n";
 import { isLegacyName, isLegacyPrompt, isLegacySlots, isRetired } from "./legacy";
 
+/**
+ * Заметка, уходящая в запрос контекстом. Обрезанную надо назвать обрезанной:
+ * ответ по началу длинного текста выглядит точно так же, как ответ по всему.
+ */
+export interface NoteContext {
+  path: string;
+  text: string;
+  clipped: boolean;
+}
+
 /** Что помнится про каждого провайдера отдельно. */
 export interface ProviderProfile {
   apiKey: string;

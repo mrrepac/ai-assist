@@ -21,7 +21,7 @@
 - **Поведение не меняется.** Ни одной правки «заодно». Найденный дефект
   показывается словами и чинится отдельным коммитом после захода.
 - **Спека:** `docs/superpowers/specs/2026-08-17-request-and-turn-design.md`.
-- **Новые модули не зовут API Obsidian.** Импорт типов из `attach.ts` допустим.
+- **Новые модули не зовут API Obsidian.** Импорт типов из `types.ts` и `api.ts` допустим.
 - **Ни `TODO`, ни `console.log`, ни `as any`, ни `innerHTML`, ни lookbehind в
   регулярках** — правила каталога Obsidian, проверяются на каждом ревью.
 - **Комментарии — по-русски, объясняют «почему», а не «что»**: так написан весь
@@ -229,8 +229,8 @@ export interface NoteContext {
  * плашки. Отдельно от панели — потому что каждое из этих решений когда-нибудь
  * оказывалось неверным, а проверить их, не поднимая Obsidian, было нельзя.
  */
-import { Attachment } from "./attach";
-import { ApiConfig } from "./types";
+import { ApiConfig } from "./api";
+import { Attachment } from "./types";
 
 export interface SubmitOptions { /* … перенесено без изменений … */ }
 ```
@@ -263,7 +263,7 @@ git commit -m "SubmitOptions describes a turn, not a panel, and moves out"
 - Test: `tools/test-parse.mjs`
 
 **Interfaces:**
-- Consumes: `SubmitOptions` (задача 2), `Attachment` из `./attach`, `AiAssistSettings`, `StoredChatMessage`, `HistoryItem`, `NoteContext`, `toolsAllowed` из `./types`.
+- Consumes: `SubmitOptions` (задача 2), `Attachment` из `./types`, `AiAssistSettings`, `StoredChatMessage`, `HistoryItem`, `NoteContext`, `toolsAllowed` из `./types`.
 - Produces: `RequestInput`, `RequestPlan`, `planRequest(input: RequestInput): RequestPlan`.
 
 В этой задаче план заполняет шесть полей: `ask`, `files`, `clearFiles`,

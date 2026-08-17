@@ -39,6 +39,7 @@ import {
   messageText,
 } from "./history";
 import { isPdfPath, pdfText } from "./pdf";
+import { SubmitOptions } from "./request";
 import { t } from "./i18n";
 import { ImageSuggestModal, ModelSuggestModal } from "./modals";
 import { RECENT_LIMIT, grouped } from "./quickmenu";
@@ -48,6 +49,7 @@ import {
   AiAssistSettings,
   Attachment,
   HistoryItem,
+  NoteContext,
   ProviderProfile,
   StoredChatMessage,
   configFor,
@@ -127,44 +129,11 @@ export interface ChatHost extends ToolHost {
   /** Прервать идущую правку выделенного. */
   stopAction(): void;
   /** Текст активной заметки, если контекст включён; clipped — отдано началом. */
-  noteContext(): { path: string; text: string; clipped: boolean } | null;
+  noteContext(): NoteContext | null;
   /** Что выделено в открытой заметке прямо сейчас. */
   selectionContext(): { path: string; text: string } | null;
   /** Вставить текст в открытую заметку; false — вставлять некуда. */
   insertIntoEditor(text: string): boolean;
-}
-
-export interface SubmitOptions {
-  /** Что показать в панели как реплику пользователя (по умолчанию — сам текст). */
-  display?: string;
-  /** Разовый системный промпт поверх общего (для действий над выделением). */
-  system?: string;
-  /** Не тащить в запрос предыдущие сообщения: действие само по себе. */
-  fresh?: boolean;
-  /**
-   * Запрос пришёл из заметки, а не из панели: действие над выделенным. Такой
-   * сам себе контекст — на что показали, с тем и работаем. Поэтому ни
-   * инструментов правки (режим «показать в панели» уже сказал «не трогай
-   * заметку»), ни текущей заметки в довесок к выделенному куску.
-   */
-  fromEditor?: boolean;
-  /**
-   * Фрагмент заметки, о котором вопрос. Не передан — берётся прикреплённое
-   * выделение; null — вопрос идёт без фрагмента, чем бы ни была занята плашка.
-   * Так повторный запрос уходит ровно тем же, каким был.
-   */
-  quote?: string | null;
-  /**
-   * Картинки, приложенные к вопросу. Не передано — берутся те, что лежат на
-   * плашке; null — вопрос идёт без картинок. Так повтор уходит с тем же
-   * вложением, что и в первый раз, а не с тем, что успели приложить после.
-   */
-  files?: Attachment[] | null;
-  /**
-   * Чем спрашивать, если не тем, что стоит в настройках. Так «ещё раз» умеет
-   * позвать другую модель, не переключая на неё плагин.
-   */
-  config?: ApiConfig;
 }
 
 export class ChatView extends ItemView {
