@@ -7,7 +7,14 @@
  * оказывалось неверным, а проверить их, не поднимая Obsidian, было нельзя.
  */
 import { ApiConfig } from "./api";
-import { Attachment } from "./types";
+import {
+  AiAssistSettings,
+  Attachment,
+  HistoryItem,
+  NoteContext,
+  StoredChatMessage,
+  toolsAllowed,
+} from "./types";
 
 export interface SubmitOptions {
   /** Что показать в панели как реплику пользователя (по умолчанию — сам текст). */
@@ -40,4 +47,88 @@ export interface SubmitOptions {
    * позвать другую модель, не переключая на неё плагин.
    */
   config?: ApiConfig;
+}
+
+export interface RequestInput {
+  /** Текст вопроса — то, что уходит модели. */
+  text: string;
+  opts: SubmitOptions;
+  settings: AiAssistSettings;
+  /** Лента ДО того, как в неё лёг этот вопрос. */
+  history: HistoryItem[];
+  /** Что лежит на плашке над полем ввода. */
+  chip: { quote: string | null; files: Attachment[] };
+  /** Заметка-контекст, уже прочитанная панелью. */
+  note: NoteContext | null;
+  /** Имя провайдера выбранной модели. */
+  provider: string;
+}
+
+export interface RequestPlan {
+  /** Реплика пользователя, как она ляжет в ленту. */
+  ask: StoredChatMessage;
+  /**
+   * Настоящий текст вопроса — тот, что уедет модели. От `ask.content`
+   * отличается у действия из заметки: в ленте там подпись действия, а в
+   * запросе текст.
+   */
+  text: string;
+  /** Вложения этого вопроса. */
+  files: Attachment[];
+  /** Снять ли картинки с плашки. */
+  clearFiles: boolean;
+  /** Фрагмент, о котором уже спросили: плашка не должна вернуть его снова. */
+  dismissQuote?: string;
+  priv: boolean;
+  canUseTools: boolean;
+}
+
+export function planRequest(input: RequestInput): RequestPlan {
+  const { text, opts, settings, chip, provider } = input;
+
+  // Прикреплённое выделение уходит с вопросом и тут же снимается: следующий
+  // вопрос — уже про своё, если не выделить заново. Явный null означает «без
+  // фрагмента» и плашку не смотрит вовсе. Приватный чат не отправляет фрагмент
+  // ни при каких условиях — последняя застава на пути всего, что могло уцелеть
+  // от прошлого разговора.
+  const asked = opts.quote === undefined ? chip.quote : opts.quote;
+  const quote = (settings.privateChat ? null : asked) ?? undefined;
+
+  // Действие из заметки плашку не смотрит и картинок с неё не забирает:
+  // приложенная для следующего вопроса, она уехала бы с чужим запросом — за те
+  // же деньги и без спроса.
+  const files = (opts.files === undefined ? (opts.fromEditor ? [] : chip.files) : opts.files) ?? [];
+  // С плашки снимаем только то, что с неё и взяли. Картинки, переданные явно
+  // («спросить заново», «повторить» после ошибки), к плашке отношения не имеют:
+  // приложенное там ждёт следующего вопроса, и стереть его молча — потерять
+  // чужую работу, а заодно оставить её висеть в памяти сеанса навсегда: в ленту
+  // она не попала, и забыть её будет уже некому.
+  const clearFiles = opts.files === undefined && !opts.fromEditor;
+
+  // Приватный чат: модель не знает ни про Obsidian, ни про заметку — разговор
+  // как в веб-чате провайдера. На действие из заметки не распространяется: оно
+  // само про неё, и выключать там нечего.
+  const priv = settings.privateChat && !opts.fromEditor;
+  // Инструментов может не быть и у самого провайдера: Perplexity ищет в вебе и
+  // отвечает, а function calling не умеет вовсе — запрос с ними отлетел бы
+  // четырёхсотой на каждый вопрос.
+  const canUseTools = settings.tools && !opts.fromEditor && !priv && toolsAllowed(provider);
+
+  // Реплику держим объектом: по нему кнопки под сообщением находят своё место в
+  // ленте, как бы она ни менялась под ними.
+  const ask: StoredChatMessage = {
+    role: "user",
+    content: opts.display ?? text,
+    quote,
+    attachments: files.length ? files : undefined,
+    // Показано не то, что уходит в запрос, — запоминаем настоящий вопрос вместе
+    // с его системным промптом, иначе «спросить заново» отправит подпись
+    // действия.
+    resend:
+      opts.display || opts.system || opts.fresh
+        ? { text, system: opts.system, fresh: opts.fresh }
+        : undefined,
+  };
+
+  return { ask, text, files, clearFiles, dismissQuote: quote, priv, canUseTools };
 }

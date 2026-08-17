@@ -47,6 +47,7 @@ const { mergeSettings, providerOf, streamAvailable, streamAllowed, configFor, sw
 const { chatToMarkdown } = await load("src/chatnote.ts", "chatnote");
 const { SCHEMA, readStore, writeStore, readHistory, writeHistoryFile, bakName } = await load("src/store.ts", "store");
 const { beginTurn, ownsTurn, rollbackTurn } = await load("src/turn.ts", "turn");
+const { planRequest } = await load("src/request.ts", "request");
 const { stripCitations } = await load("src/cite.ts", "cite");
 const { parseCall, runCall } = await load("src/tools.ts", "tools");
 const { diffWords } = await load("src/diff.ts", "diff");
@@ -1446,6 +1447,147 @@ feed3.length = 0;
 feed3.push(mkAsk("чужой разговор"));
 check("чужую ленту откат не трогает", rollbackTurn(feed3, turn3), false);
 check("чужая лента цела", feed3.length, 1);
+
+// ——— planRequest: что уедет модели ———
+// Три релиза подряд дефекты приходили с плашки: повтор после ошибки уносил
+// чужие картинки, «спросить заново» терял фрагмент. Правило «с плашки снимаем
+// только то, что с неё и взяли» проверяется здесь, а не на живом Obsidian.
+const img = { id: "a1", name: "снимок.png", mime: "image/png" };
+const other = { id: "a2", name: "другой.png", mime: "image/png" };
+const baseInput = (over = {}) => ({
+  text: "привет",
+  opts: {},
+  settings: defaultSettings(),
+  history: [],
+  chip: { quote: null, files: [] },
+  note: null,
+  provider: "deepseek",
+  ...over,
+});
+
+check(
+  "фрагмент берётся с плашки",
+  planRequest(baseInput({ chip: { quote: "кусок", files: [] } })).ask.quote,
+  "кусок",
+);
+check(
+  "явный фрагмент побеждает плашку",
+  planRequest(baseInput({ opts: { quote: "свой" }, chip: { quote: "кусок", files: [] } })).ask.quote,
+  "свой",
+);
+check(
+  "явный null — вопрос без фрагмента",
+  planRequest(baseInput({ opts: { quote: null }, chip: { quote: "кусок", files: [] } })).ask.quote,
+  undefined,
+);
+check(
+  "приватный чат не отправляет фрагмент никогда",
+  planRequest(
+    baseInput({
+      settings: { ...defaultSettings(), privateChat: true },
+      chip: { quote: "кусок", files: [] },
+    }),
+  ).ask.quote,
+  undefined,
+);
+check(
+  "спросили о фрагменте — он помечен спрошенным",
+  planRequest(baseInput({ chip: { quote: "кусок", files: [] } })).dismissQuote,
+  "кусок",
+);
+
+check(
+  "картинки берутся с плашки",
+  planRequest(baseInput({ chip: { quote: null, files: [img] } })).files.map((f) => f.id),
+  ["a1"],
+);
+check(
+  "заход из редактора плашку не смотрит",
+  planRequest(baseInput({ opts: { fromEditor: true }, chip: { quote: null, files: [img] } })).files,
+  [],
+);
+check(
+  "явные картинки побеждают плашку",
+  planRequest(baseInput({ opts: { files: [other] }, chip: { quote: null, files: [img] } })).files.map(
+    (f) => f.id,
+  ),
+  ["a2"],
+);
+check(
+  "взяли с плашки — её и чистим",
+  planRequest(baseInput({ chip: { quote: null, files: [img] } })).clearFiles,
+  true,
+);
+check(
+  "картинки переданы явно — плашка не наша, не трогаем",
+  planRequest(baseInput({ opts: { files: [other] }, chip: { quote: null, files: [img] } })).clearFiles,
+  false,
+);
+check(
+  "заход из редактора плашку не чистит",
+  planRequest(baseInput({ opts: { fromEditor: true }, chip: { quote: null, files: [img] } })).clearFiles,
+  false,
+);
+
+check("обычный заход не приватный", planRequest(baseInput()).priv, false);
+check(
+  "приватный чат",
+  planRequest(baseInput({ settings: { ...defaultSettings(), privateChat: true } })).priv,
+  true,
+);
+check(
+  "действие из заметки приватности не касается",
+  planRequest(
+    baseInput({
+      opts: { fromEditor: true },
+      settings: { ...defaultSettings(), privateChat: true },
+    }),
+  ).priv,
+  false,
+);
+
+check("инструменты по умолчанию разрешены", planRequest(baseInput()).canUseTools, true);
+check(
+  "выключены настройкой",
+  planRequest(baseInput({ settings: { ...defaultSettings(), tools: false } })).canUseTools,
+  false,
+);
+check(
+  "провайдер без function calling",
+  planRequest(baseInput({ provider: "perplexity" })).canUseTools,
+  false,
+);
+check(
+  "действию из заметки инструменты не положены",
+  planRequest(baseInput({ opts: { fromEditor: true } })).canUseTools,
+  false,
+);
+check(
+  "приватному чату тоже",
+  planRequest(baseInput({ settings: { ...defaultSettings(), privateChat: true } })).canUseTools,
+  false,
+);
+
+check(
+  "показано то же, что ушло — переспрашивать нечего",
+  planRequest(baseInput()).ask.resend,
+  undefined,
+);
+check(
+  "действие рисуется подписью — настоящий вопрос запомнен",
+  planRequest(baseInput({ opts: { display: "**Исправить орфографию**", system: "правь", fresh: true } }))
+    .ask,
+  {
+    role: "user",
+    content: "**Исправить орфографию**",
+    resend: { text: "привет", system: "правь", fresh: true },
+  },
+);
+check(
+  "модели уходит текст, а не подпись действия",
+  planRequest(baseInput({ opts: { display: "**Исправить орфографию**" } })).text,
+  "привет",
+);
 
 console.log(`\n${pass} прошло, ${fail} упало`);
 process.exit(fail ? 1 : 0);
