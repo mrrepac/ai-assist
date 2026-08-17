@@ -556,9 +556,25 @@ export class AiAssistSettingTab extends PluginSettingTab {
       .addToggle((c) =>
         c.setValue(s.freshOnAction).onChange(async (v) => {
           s.freshOnAction = v;
+          keepLog.settingEl.toggle(v);
           await this.save();
         }),
       );
+
+    // Строку прячем по месту, а не перерисовкой всей вкладки: та отбросила бы
+    // настройки к началу, и до тумблера, который только что нажали, пришлось бы
+    // прокручиваться заново.
+    const keepLog = new Setting(containerEl)
+      .setName(t("setFreshKeepLog"))
+      .setDesc(t("setFreshKeepLogDesc"))
+      .addToggle((c) =>
+        c.setValue(s.freshKeepLog).onChange(async (v) => {
+          s.freshKeepLog = v;
+          await this.save();
+        }),
+      );
+    // Чистки нет — и беречь от неё нечего.
+    keepLog.settingEl.toggle(s.freshOnAction);
 
     // Выбирать не из чего, пока настроен один провайдер, — строка стояла бы
     // с единственным пунктом и только спрашивала бы, зачем она.

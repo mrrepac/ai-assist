@@ -127,7 +127,10 @@ Everything lives in three sections:
   nothing), the length past which it asks before sending, token usage display, the model
   for a private chat, where new notes go (the vault root / a folder of your own / next to
   the note being worked on), whether images brought into the chat are kept in the vault,
-  note editing tools, the system prompt for the chat.
+  note editing tools, the system prompt for the chat. The same section decides how the
+  panel starts: whether it opens empty when Obsidian starts, and whether it is cleared
+  before every run from a note (and if it is — whether the cards of edits already made,
+  with their “Undo edit” button, survive the clearing).
 - **Quick menu** — the keys: five by default, more if you add them, and a row can be
   dragged by its handle; plus what the plugin puts into the editor's context menu. Each
   key is an action, and this is where an action is

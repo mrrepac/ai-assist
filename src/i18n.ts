@@ -280,11 +280,15 @@ const en = {
     "When Obsidian starts, the panel opens empty and yesterday's conversation is dropped. Save what you need to a note first.",
   setFreshAction: "A run from a note starts a new conversation",
   setFreshActionDesc:
-    "An action that answers in the panel — from the quick menu, a one-off prompt, or “ask " +
-    "about the selection” — clears it first, so the previous conversation is not paid for " +
-    "again. An action that edits the note directly (replace or append) leaves the " +
-    "conversation as it is. Edits already made stay in the log, and the cleared conversation " +
-    "comes back if you click the notice.",
+    "Every run from a note — the quick menu, a one-off prompt, “ask about the selection”, an " +
+    "edit of the text — clears the panel first: the previous conversation is not paid for " +
+    "again, and the card you are waiting for is the only thing on screen. The cleared " +
+    "conversation comes back if you click the notice.",
+  setFreshKeepLog: "Keep the edit log",
+  setFreshKeepLogDesc:
+    "The cards of earlier edits survive the clearing, so their “Undo edit” button stays " +
+    "within reach. Without it the panel starts empty and an earlier edit is undone the usual " +
+    "way — Ctrl+Z in the note.",
   setPrivateModel: "The model for a private chat",
   setPrivateModelDesc:
     "A private chat is started to ask something that is not about the vault at all, and the " +
@@ -735,11 +739,14 @@ const ru: typeof en = {
     "При запуске Obsidian панель открывается пустой, вчерашний разговор не подхватывается. Что нужно — сохрани в заметку заранее.",
   setFreshAction: "Запуск из заметки начинает разговор заново",
   setFreshActionDesc:
-    "Действие, отвечающее в панели, — из быстрого меню, разовый промпт или «спросить о " +
-    "выделенном» — сначала очищает её: за прежний разговор не приходится платить снова. " +
-    "Действие, которое правит заметку напрямую (замена или дописывание), разговора не " +
-    "касается. Записи о сделанных правках остаются, а стёртый разговор возвращается нажатием " +
-    "по уведомлению.",
+    "Любой запуск из заметки — быстрое меню, разовый промпт, «спросить о выделенном», правка " +
+    "текста — сначала очищает панель: за прежний разговор не приходится платить снова, а на " +
+    "экране остаётся ровно то, чего ждёшь. Стёртое возвращается нажатием по уведомлению.",
+  setFreshKeepLog: "Беречь журнал правок",
+  setFreshKeepLogDesc:
+    "Карточки прежних правок переживают чистку, и кнопка «Отменить правку» остаётся под " +
+    "рукой. Без этого панель начинается пустой, а прежняя правка отменяется обычным Ctrl+Z " +
+    "в заметке.",
   setPrivateModel: "Сетка приватного чата",
   setPrivateModelDesc:
     "Приватный чат заводят, чтобы спросить не про хранилище, и модель там обычно нужна другая — " +

@@ -28,7 +28,16 @@ import {
 } from "./attach";
 import { stripCitations } from "./cite";
 import { DiffResult, diffWords } from "./diff";
-import { AttachedDoc, clipNote, contextWindow, dropTalk, messageContent, messageText } from "./history";
+import {
+  AttachedDoc,
+  afterFresh,
+  clipNote,
+  contextWindow,
+  dropTalk,
+  mergeRestored,
+  messageContent,
+  messageText,
+} from "./history";
 import { isPdfPath, pdfText } from "./pdf";
 import { t } from "./i18n";
 import { ImageSuggestModal, ModelSuggestModal } from "./modals";
@@ -666,21 +675,23 @@ export class ChatView extends ItemView {
    * так не тащит, но ответ ложится в ленту — и следующий вопрос, набранный уже
    * в панели, увозит с собой всё накопленное.
    *
-   * Записи журнала правок остаются: в их карточках живёт кнопка «Отменить
-   * правку», и стереть их значит отобрать возврат. Плашку не трогаем — фрагмент
-   * вешает сам вызывающий, а картинки на ней не разговор.
+   * Сметается и журнал правок: правку запускают из заметки и смотрят сюда за
+   * ответом на неё, а не читают прошлые. Кому дорога кнопка «Отменить правку»,
+   * тот включает «беречь журнал правок» — тогда карточки остаются. Плашку не
+   * трогаем: фрагмент вешает сам вызывающий, а картинки на ней не разговор.
    */
   freshTalk(): void {
     if (!this.host.settings.freshOnAction) return;
     // Живой запрос: его ответ пришёл бы в пустую ленту и повис без вопроса.
     if (this.controller) return;
     const history = this.host.history;
-    // Разговора нет — и говорить не о чем: уведомление на пустом месте
+    const keepLog = this.host.settings.freshKeepLog;
+    // Чистить нечего — и говорить не о чем: уведомление на пустом месте
     // раздражало бы на каждом нажатии клавиши.
-    if (dropTalk(history).length === history.length) return;
+    if (afterFresh(history, keepLog).length === history.length) return;
 
     const undo = this.snapshot();
-    this.cut(0, history.length);
+    this.cut(0, history.length, keepLog);
     undo(t("chatFreshStarted"));
   }
 
@@ -697,8 +708,12 @@ export class ChatView extends ItemView {
       const notice = new Notice(`${label}\n${t("chatUndoClear")}`, 8000);
       notice.noticeEl.addClass("ai-undo-notice");
       notice.noticeEl.onclick = () => {
+        // Восемь секунд уведомления — ровно то время, пока модель правит текст,
+        // и карточка этой правки уже легла в ленту. Голая подмена снимком
+        // унесла бы её вместе с кнопкой «Отменить правку».
+        const back = mergeRestored(kept, this.host.history);
         this.host.history.length = 0;
-        this.host.history.push(...kept);
+        this.host.history.push(...back);
         this.host.persistHistory();
         this.repaint();
         notice.hide();
@@ -707,15 +722,16 @@ export class ChatView extends ItemView {
   }
 
   /**
-   * Убрать кусок ленты. Записи журнала правок остаются на месте: это отчёт о
-   * работе над заметкой, а не часть разговора, и к снятому вопросу они
-   * отношения не имеют.
+   * Убрать кусок ленты. Записи журнала правок по умолчанию остаются на месте:
+   * это отчёт о работе над заметкой, а не часть разговора, и к снятому вопросу
+   * они отношения не имеют. Сметает их только чистый лист перед запуском из
+   * заметки — там на них смотрят как на прошлые, и то по настройке.
    */
-  private cut(from: number, to: number): void {
+  private cut(from: number, to: number, keepLog = true): void {
     const removed = this.host.history.splice(from, to - from);
     // Правило «журнал правок остаётся» живёт в одном месте — dropTalk; так
     // тест на dropTalk и держит в узде оба его применения разом.
-    this.host.history.splice(from, 0, ...dropTalk(removed));
+    this.host.history.splice(from, 0, ...(keepLog ? dropTalk(removed) : []));
     this.host.persistHistory();
     this.forgetSaved(removed);
     this.repaint();

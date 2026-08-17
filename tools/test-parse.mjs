@@ -40,7 +40,7 @@ async function load(entry, name) {
 
 const { drainSse, endpoint, collectToolCalls, isLocalUrl, readSources, addUsage, describeError } = await load("src/api.ts", "api");
 const { cleanReply, offsetAt, sectionAt, sectionName } = await load("src/actions.ts", "actions");
-const { contextWindow, messageText, messageContent, docBlock, clipNote, dropTalk } = await load("src/history.ts", "history");
+const { contextWindow, messageText, messageContent, docBlock, clipNote, dropTalk, afterFresh, mergeRestored } = await load("src/history.ts", "history");
 const { fitSize, isImagePath, isAttachablePath, embeddedFiles, pastedName, stamp, humanSize, AttachmentStore } = await load("src/attach.ts", "attach");
 const { isPdfPath, joinItems, tidy, clipPages } = await load("src/pdf.ts", "pdf");
 const { mergeSettings, providerOf, streamAvailable, streamAllowed, configFor, switchProvider, defaultSettings, PROVIDER_ORDER, providerRank, toolsAllowed, builtinModels, activeConfig } = await load("src/types.ts", "types");
@@ -1296,6 +1296,33 @@ check("пустая лента остаётся пустой", dropTalk([]), [])
 check(
   "порядок записей журнала не меняется",
   dropTalk([logEntry, askItem, secondLog]).map((item) => item.id),
+  ["1", "2"],
+);
+
+// ——— afterFresh: что остаётся перед запуском действия из заметки ———
+// Правило чистки живёт здесь одно на всех, потому что вопрос «чистить ли
+// вообще» решается тем же ответом: останется ровно то, что и было, — значит
+// уведомление «вернуть разговор» пообещало бы возврат ничего.
+check("чистый лист сметает и журнал", afterFresh([askItem, logEntry, replyItem], false), []);
+check("«беречь журнал» оставляет карточки", afterFresh([askItem, logEntry, replyItem], true), [logEntry]);
+check("одни карточки, журнал берегут — чистить нечего", afterFresh([logEntry], true), [logEntry]);
+check("одни карточки, журнал не берегут — сметается", afterFresh([logEntry], false), []);
+check("пустая лента остаётся пустой и тут", afterFresh([], true), []);
+
+// ——— mergeRestored: возврат ленты по уведомлению ———
+// Уведомление живёт восемь секунд — ровно столько модель и правит текст. Голая
+// подмена ленты снимком уносила бы карточку идущей правки вместе с кнопкой
+// «Отменить правку», хотя текст в заметке уже заменён.
+check("вернули ленту, нового не появилось", mergeRestored([askItem, replyItem], []), [askItem, replyItem]);
+check("карточка идущей правки уцелела", mergeRestored([askItem], [logEntry]), [askItem, logEntry]);
+check(
+  "уцелевшее не задваивается",
+  mergeRestored([askItem, replyItem], [askItem, replyItem, logEntry]),
+  [askItem, replyItem, logEntry],
+);
+check(
+  "порядок нового хвоста сохраняется",
+  mergeRestored([], [logEntry, secondLog]).map((item) => item.id),
   ["1", "2"],
 );
 

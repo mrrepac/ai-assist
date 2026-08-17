@@ -26,7 +26,7 @@ import { ApiConfig, ApiError, Usage, addUsage, chat } from "./api";
 import { AttachmentStore } from "./attach";
 import { chatToMarkdown } from "./chatnote";
 import { diffWords } from "./diff";
-import { clipNote } from "./history";
+import { afterFresh, clipNote } from "./history";
 import { I18nKey, t } from "./i18n";
 import { askConfirm } from "./modals";
 import { QuickMenu, QuickScope, RECENT_LIMIT } from "./quickmenu";
@@ -754,6 +754,12 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
       });
       return;
     }
+
+    // Чистый лист и здесь: правка ложится в панель карточкой журнала, и без
+    // чистки они копятся там одна под другой — за день набирается простыня, в
+    // которой не найти ту, что сейчас. Чистим до того, как заведём запись,
+    // иначе снесли бы её же.
+    this.freshTalk();
 
     // Ссылку держим локально: stopAll() обнуляет this.running, и по нему уже
     // не узнать, что запрос прервали — прерванный ответ уехал бы в заметку.
@@ -1596,6 +1602,27 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   get chatView(): ChatView | null {
     const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT)[0];
     return leaf?.view instanceof ChatView ? leaf.view : null;
+  }
+
+  /**
+   * Чистый лист перед запуском действия из заметки. Правка заметки панель не
+   * открывает — та может быть закрыта или лежать отложенной вкладкой, и тогда
+   * чистим ленту сами: иначе она копилась бы молча, и открывший панель нашёл
+   * бы в ней всё, что накопилось за день. Возврат по уведомлению предлагает
+   * только поднятая панель — обещать возврат того, чего не видно, незачем.
+   */
+  private freshTalk(): void {
+    if (!this.settings.freshOnAction) return;
+    const view = this.chatView;
+    if (view) {
+      view.freshTalk();
+      return;
+    }
+    const kept = afterFresh(this.history, this.settings.freshKeepLog);
+    if (kept.length === this.history.length) return;
+    this.history.length = 0;
+    this.history.push(...kept);
+    this.persistHistory();
   }
 
   /** Открыть панель по кнопке: молча провалиться тут хуже, чем сказать вслух. */

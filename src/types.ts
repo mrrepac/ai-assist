@@ -94,6 +94,12 @@ export interface AiAssistSettings {
    */
   freshOnAction: boolean;
   /**
+   * Беречь ли при этой чистке журнал правок. Карточка — единственный вход к
+   * кнопке «Отменить правку», но текст правится прямо в заметке, и обычный
+   * Ctrl+Z никто не отменял; поэтому по умолчанию панель начинается пустой.
+   */
+  freshKeepLog: boolean;
+  /**
    * Занимать ли Alt+1 под быстрое меню. Своя раскладка на чужой клавиатуре —
    * навязанное решение, и гайдлайн каталога не зря её не рекомендует: команда
    * и так доступна из палитры, а хоткей на неё вешается свой.
@@ -483,6 +489,7 @@ export function defaultSettings(): AiAssistSettings {
     draft: "",
     freshStart: true,
     freshOnAction: true,
+    freshKeepLog: false,
     defaultHotkey: false,
   };
 }
