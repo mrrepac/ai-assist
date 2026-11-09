@@ -1,13 +1,20 @@
 {
   "name": "ai-assist",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "Obsidian plugin: sidebar AI chat and in-place rewriting of the selected text.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-    "test": "node tools/test-parse.mjs"
+    "test": "node tools/test-parse.mjs",
+    "build:deploy": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production --deploy",
+    "test:subscription": "node tools/test-chatgpt.mjs",
+    "test:auth": "node tools/test-chatgpt-auth.mjs",
+    "test:all": "npm test && npm run test:subscription && npm run test:auth && npm run test:quota && npm run test:composer",
+    "test:quota": "node tools/test-chatgpt-quota.mjs && node tools/test-chatgpt-quota-view.mjs",
+    "test:composer": "node tools/test-chat-composer.mjs",
+    "test:composer-layout": "node tools/test-chat-composer.mjs --layout"
   },
   "keywords": [
     "obsidian-plugin",

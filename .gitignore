@@ -9,3 +9,13 @@ node_modules/
 .DS_Store
 Thumbs.db
 *.log
+
+# Local deployment backups, credentials and verification outputs are private.
+/deployment-backups/
+/.superpowers/
+/release-artifacts/
+/screenshots/
+.env
+.env.*
+accounts.enc
+accounts.enc.*

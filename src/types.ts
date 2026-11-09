@@ -1,3 +1,4 @@
+import { CHATGPT_PLAN_URL } from "./chatgpt-responses";
 import { AiAction, defaultActions } from "./actions";
 import { ApiConfig, Source, listModels } from "./api";
 import { DiffSegment } from "./diff";
@@ -22,6 +23,10 @@ export interface ProviderProfile {
 }
 
 export interface AiAssistSettings {
+  /** UI acknowledgement only; credentials never enter vault settings. */
+  chatGPTWelcomeSeen?: boolean;
+  /** Per-model subscription effort, never applied to paid API providers. */
+  chatGPTEfforts?: Record<string, string>;
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -287,6 +292,7 @@ export const DEEPSEEK_MODEL = "deepseek-v4-flash";
  * подставляет URL — работает с ними один и тот же клиент.
  */
 export const PROVIDERS: Record<string, { baseUrl: string }> = {
+  chatgpt: { baseUrl: CHATGPT_PLAN_URL },
   deepseek: { baseUrl: "https://api.deepseek.com" },
   chadgpt: { baseUrl: "https://ask.chadgpt.ru/api/v1" },
   gptunnel: { baseUrl: "https://gptunnel.ru/v1" },
@@ -397,6 +403,7 @@ export function streamAllowed(provider: string): boolean {
  */
 export function configFor(s: AiAssistSettings, provider: string): ApiConfig | null {
   const profile = s.profiles[provider];
+  if (provider === "chatgpt") return { baseUrl: CHATGPT_PLAN_URL, apiKey: "", model: profile?.model ?? "", reasoningEffort: s.chatGPTEfforts?.[profile?.model ?? ""], temperature: s.temperature, maxTokens: 0 };
   if (!profile?.model) return null;
   return {
     baseUrl: profile.baseUrl || PROVIDERS[provider]?.baseUrl || "",
@@ -410,6 +417,7 @@ export function configFor(s: AiAssistSettings, provider: string): ApiConfig | nu
 /** Настройки запроса из шапки панели — то, что вписано в настройках. */
 export function panelConfig(s: AiAssistSettings): ApiConfig {
   return {
+    reasoningEffort: s.baseUrl === CHATGPT_PLAN_URL ? s.chatGPTEfforts?.[s.model] : undefined,
     baseUrl: s.baseUrl,
     apiKey: s.apiKey,
     model: s.model,
@@ -435,6 +443,8 @@ export function activeConfig(s: AiAssistSettings): ApiConfig {
 /** Человеческое имя провайдера — для настроек и для меню в шапке панели. */
 export function providerLabel(name: string): string {
   switch (name) {
+    case "chatgpt":
+      return t("chatGPTProvider");
     case "deepseek":
       return t("setProviderDeepseek");
     case "polza":
@@ -514,7 +524,7 @@ export function switchProvider(s: AiAssistSettings, name: string): void {
   const saved = s.profiles[name];
   const preset = PROVIDERS[name];
   s.baseUrl = preset ? preset.baseUrl : saved?.baseUrl ?? "";
-  s.apiKey = saved?.apiKey ?? "";
+  s.apiKey = name === "chatgpt" ? "" : saved?.apiKey ?? "";
   s.model = saved?.model ?? defaultModel(name);
 }
 

@@ -1,3 +1,7 @@
+import { renderChatGPTQuota } from "./chatgpt-quota-view";
+import { chatGPTEfforts, chatGPTEffort } from "./chatgpt-options";
+import { chatGPTStatus } from "./chatgpt-auth";
+import { isChatGPTPlan } from "./chatgpt-responses";
 import {
   App,
   ItemView,
@@ -264,9 +268,10 @@ export class ChatView extends ItemView {
     });
 
     const foot = root.createDiv({ cls: "ai-foot" });
+    const composer = foot.createDiv({ cls: "ai-composer" });
     // Плашка выделения живёт над полем ввода: вопрос задают здесь, и здесь же
     // должно быть видно, о чём он.
-    this.attachEl = foot.createDiv({ cls: "ai-attach" });
+    this.attachEl = composer.createDiv({ cls: "ai-attach" });
     this.attachEl.hide();
 
     // Выделили в заметке и пришли сюда — момент перехода и есть смена активного
@@ -284,13 +289,22 @@ export class ChatView extends ItemView {
     // Скрепка — это label с input внутри, а не кнопка: диалог выбора файла из
     // кода не открывается, пока в Obsidian не открыта ни одна заметка, — а чат
     // как раз тогда и открывают. Настоящий щелчок по label работает всегда.
-    const clip = foot.createEl("label", { cls: "ai-clip clickable-icon" });
+    const toolbar = composer.createDiv({ cls: "ai-composer-toolbar" });
+    const clip = toolbar.createEl("label", { cls: "ai-clip clickable-icon" });
     setIcon(clip, "paperclip");
     clip.setAttr("aria-label", t("chatClip"));
+    clip.setAttr("role", "button");
+    clip.tabIndex = 0;
     const picker = clip.createEl("input", {
       cls: "ai-clip-input",
       type: "file",
       attr: { accept: "image/*,application/pdf", multiple: true },
+    });
+    clip.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        picker.click();
+      }
     });
     picker.addEventListener("change", () => {
       const chosen = Array.from(picker.files ?? []);
@@ -308,16 +322,22 @@ export class ChatView extends ItemView {
       menu.showAtMouseEvent(e);
     });
 
-    this.inputEl = foot.createEl("textarea", {
+    toolbar.createDiv({ cls: "ai-composer-meta" });
+    this.paintPlan();
+    this.inputEl = composer.createEl("textarea", {
       cls: "ai-input",
-      attr: { rows: "2", placeholder: t("chatPlaceholder") },
+      attr: {
+        rows: "1", placeholder: t("chatPlaceholder"), "aria-label": t("chatMessage"),
+        "aria-description": Platform.isMobile ? t("chatPlaceholder") : t("chatInputHint"),
+      },
     });
+    composer.insertBefore(this.inputEl, toolbar);
     // Недописанный вопрос переживает и закрытие панели, и перезапуск Obsidian:
     // мысль, которую печатали, дороже поля, которое её потеряло.
     this.inputEl.value = this.host.settings.draft;
     this.inputEl.addEventListener("keydown", (e) => {
       // На телефоне Enter — это перенос строки, отправка только кнопкой.
-      if (e.key === "Enter" && !e.shiftKey && !Platform.isMobile) {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing && !Platform.isMobile) {
         e.preventDefault();
         void this.send();
         return;
@@ -342,7 +362,7 @@ export class ChatView extends ItemView {
     });
     this.setupDrop(root);
 
-    this.sendBtn = foot.createEl("button", { cls: "ai-send mod-cta" });
+    this.sendBtn = toolbar.createEl("button", { cls: "ai-send mod-cta", attr: { type: "button" } });
     this.paintSendButton();
     this.sendBtn.onclick = () => {
       if (this.busy) this.stop();
@@ -365,11 +385,13 @@ export class ChatView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.disposeQuota?.();
     this.stop();
   }
 
   /** Панель могла быть открыта до правки настроек — освежаем подпись модели. */
   refreshHeader(): void {
+    this.paintPlan();
     const model = this.contentEl.querySelector(".ai-bar-model");
     if (model) model.textContent = this.host.chatConfig().model;
     this.paintReach();
@@ -392,6 +414,52 @@ export class ChatView extends ItemView {
    * только предлагала бы нажать на себя. Вместо неё метка — как в приватном
    * окне браузера, чтобы видеть, где находишься, а не вспоминать.
    */
+
+  private disposeQuota?: () => void;
+  private paintPlan(): void {
+    this.disposeQuota?.();
+    this.disposeQuota = undefined;
+    const meta = this.contentEl.querySelector(".ai-composer-meta") as HTMLElement | null;
+    if (!meta) return;
+    meta.empty();
+    meta.removeClass("ai-plan-status");
+    const cfg = this.host.chatConfig();
+    const row = meta.createDiv({ cls: "ai-composer-options" });
+    const model = row.createEl("button", {
+      cls: "ai-composer-model",
+      attr: { type: "button", "aria-label": t("chatPickModel") + ": " + cfg.model, "aria-haspopup": "menu" },
+    });
+    model.createSpan({ cls: "ai-model-name", text: cfg.model });
+    setIcon(model.createSpan({ cls: "ai-model-chevron" }), "chevron-down");
+    model.onclick = (e) => this.openModelMenu(e);
+    if (!isChatGPTPlan(cfg)) return;
+    meta.addClass("ai-plan-status");
+    const statusIcon = model.createSpan({ cls: "ai-plan-indicator" });
+    statusIcon.setAttr("aria-hidden", "true");
+    void chatGPTStatus().then(status => {
+      if (!row.isConnected) return;
+      const pending = status.verificationPending;
+      const ready = !pending && status.planUsageEnabled;
+      statusIcon.toggleClass("is-ready", ready);
+      statusIcon.toggleClass("is-warning", !ready);
+      const statusLabel = t(pending ? "chatGPTStatusPending" : ready ? "chatGPTUse" : "chatGPTDisconnected");
+      model.setAttr("aria-label", t("chatPickModel") + ": " + cfg.model + ". " + statusLabel);
+    }).catch(() => {
+      if (!row.isConnected) return;
+      statusIcon.addClass("is-warning");
+      model.setAttr("aria-label", t("chatPickModel") + ": " + cfg.model + ". " + t("chatGPTDisconnected"));
+    });
+    const effort = row.createEl("select", { attr: { "aria-label": t("chatGPTEffort"), "aria-description": t("chatGPTEffortHint") } });
+    effort.createEl("option", { text: t("chatGPTDefault"), value: "" });
+    for (const value of chatGPTEfforts(cfg.model)) effort.createEl("option", { text: value, value });
+    effort.value = chatGPTEffort(cfg.model, cfg.reasoningEffort) ?? "";
+    effort.onchange = () => {
+      this.host.settings.chatGPTEfforts = { ...this.host.settings.chatGPTEfforts, [cfg.model]: effort.value };
+      void this.host.saveSettings();
+    };
+    this.disposeQuota = renderChatGPTQuota(meta, true);
+  }
+
   private paintReach(): void {
     // Настройки могли записать до того, как панель успела построиться.
     if (!this.ctxEl) return;
@@ -485,7 +553,11 @@ export class ChatView extends ItemView {
           .onClick(() => void this.pickModel()),
       );
     }
-    menu.showAtMouseEvent(e);
+    const target = e.currentTarget as HTMLElement | null;
+    if (e.detail === 0 && target) {
+      const rect = target.getBoundingClientRect();
+      menu.showAtPosition({ x: rect.left, y: rect.bottom });
+    } else menu.showAtMouseEvent(e);
   }
 
   /**
@@ -1509,10 +1581,14 @@ export class ChatView extends ItemView {
     return out;
   }
 
+  onResize(): void {
+    if (this.inputEl) this.autoGrow();
+  }
+
   private autoGrow(): void {
     // Сначала отпускаем высоту, иначе scrollHeight покажет прежнюю, а не нужную.
     this.inputEl.setCssStyles({ height: "auto" });
-    this.inputEl.setCssStyles({ height: Math.min(this.inputEl.scrollHeight, 200) + "px" });
+    this.inputEl.setCssStyles({ height: Math.min(this.inputEl.scrollHeight, 160) + "px" });
   }
 
   private saveDraft(): void {
@@ -1557,12 +1633,14 @@ export class ChatView extends ItemView {
 
   private paintSendButton(): void {
     this.sendBtn.empty();
-    setIcon(this.sendBtn, this.busy ? "square" : "send-horizontal");
+    setIcon(this.sendBtn, this.busy ? "square" : "arrow-up");
     this.sendBtn.setAttr("aria-label", this.busy ? t("chatStop") : t("chatSend"));
     this.sendBtn.toggleClass("is-stop", this.busy);
   }
 
   private async send(): Promise<void> {
+    // Keep the next draft intact when Enter is pressed during a running reply.
+    if (this.busy) return;
     const text = this.inputEl.value.trim();
     // Одна картинка без слов — тоже вопрос: «что здесь?» модель понимает и так.
     if (!text && this.files.length === 0) return;
@@ -1751,6 +1829,7 @@ export class ChatView extends ItemView {
         messages.push({
           role: "assistant",
           content: answer,
+          responseItems: result.responseItems,
           tool_calls: result.toolCalls.map((c) => ({
             id: c.id,
             type: "function" as const,

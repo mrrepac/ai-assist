@@ -28,7 +28,7 @@ jobs:
       # a red test stops the release: better a tag with no release behind it
       # than a release that mangles someone's notes
       - name: Run tests
-        run: npm test
+        run: npm run test:all
 
       # Provenance depends on Sigstore's transparency log; when that service is
       # down the attestation must not hold the release hostage.

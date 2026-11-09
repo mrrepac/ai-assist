@@ -9,6 +9,11 @@
   position: relative; /* якорь для надписи о перетаскивании */
 }
 
+/* The footer owns the bottom inset, not Obsidian's generic view padding. */
+.workspace-leaf-content .view-content.ai-assist-chat {
+  padding-bottom: 0;
+}
+
 .ai-assist-chat .ai-list-wrap {
   position: relative; /* якорь для кнопки «вниз» */
   flex: 1;
@@ -314,18 +319,148 @@
 }
 
 .ai-assist-chat .ai-foot {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 8px 10px;
+}
+
+.ai-assist-chat .ai-composer {
   display: flex;
-  align-items: flex-end;
-  /* Плашка выделения встаёт своей строкой над полем ввода и кнопкой. */
+  flex-direction: column;
+  min-width: 0;
+  padding: 5px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: var(--background-primary);
+  transition: border-color 120ms ease;
+}
+
+.ai-assist-chat .ai-composer:focus-within {
+  border-color: var(--background-modifier-border-focus, var(--interactive-accent));
+}
+
+.ai-assist-chat .ai-composer > .ai-attach {
+  padding: 4px 5px 2px;
+}
+
+.ai-assist-chat .ai-composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ai-assist-chat .ai-composer-meta {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: row;
   flex-wrap: wrap;
-  gap: var(--size-4-2);
-  padding: var(--size-4-2) var(--size-4-3);
-  border-top: 1px solid var(--background-modifier-border);
+  align-items: center;
+  gap: 2px 8px;
+  min-width: 0;
+}
+
+.ai-assist-chat .ai-composer-options {
+  display: flex;
+  flex: 0 1 auto;
+  max-width: 100%;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 2px 4px;
+  min-width: 0;
+}
+
+.ai-assist-chat .ai-composer-model {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 200px;
+  height: 24px;
+  padding: 2px 5px;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.ai-assist-chat .ai-composer-model:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.ai-assist-chat .ai-model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-assist-chat .ai-model-chevron { display: flex; flex-shrink: 0; }
+.ai-assist-chat .ai-model-chevron .svg-icon { width: 12px; height: 12px; }
+.ai-assist-chat .ai-plan-indicator {
+  flex: 0 0 5px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+.ai-assist-chat .ai-plan-indicator.is-ready { background: var(--color-green); }
+.ai-assist-chat .ai-plan-indicator.is-warning { background: var(--text-warning); }
+
+.ai-assist-chat .ai-composer-options select {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 18px 0 5px;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  background-color: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.ai-assist-chat .ai-composer .ai-clip,
+.ai-assist-chat .ai-composer .ai-send {
+  display: inline-flex;
+  flex: 0 0 28px;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  margin: 0;
+  border: 0;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.ai-assist-chat .ai-composer .ai-clip { color: var(--text-muted); }
+.ai-assist-chat .ai-composer .ai-send { background: var(--interactive-accent); color: var(--text-on-accent); }
+.ai-assist-chat .ai-composer .ai-send:hover { background: var(--interactive-accent-hover); }
+.ai-assist-chat .ai-composer .ai-send.is-stop { background: var(--background-modifier-error); }
+.ai-assist-chat .ai-composer .ai-send .svg-icon,
+.ai-assist-chat .ai-composer .ai-clip .svg-icon { width: 16px; height: 16px; }
+
+.ai-assist-chat .ai-composer :is(button, select, .ai-clip, .ai-quota-summary):focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+.is-mobile .ai-assist-chat .ai-composer .ai-clip,
+.is-mobile .ai-assist-chat .ai-composer .ai-send {
+  flex-basis: 36px;
+  width: 36px;
+  height: 36px;
 }
 
 /* Счёт за разговор: своей строкой во всю ширину, ниже поля ввода. */
 .ai-assist-chat .ai-total {
-  flex-basis: 100%;
+  margin-top: 4px;
   text-align: right;
   font-size: var(--font-ui-smaller);
   color: var(--text-faint);
@@ -550,13 +685,30 @@
   white-space: pre-wrap;
 }
 
-.ai-assist-chat .ai-input {
-  flex: 1;
+.ai-assist-chat .ai-composer textarea.ai-input,
+.ai-assist-chat .ai-composer textarea.ai-input:focus {
+  display: block;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  max-height: 160px;
+  margin: 0;
+  padding: 8px 7px;
   resize: none;
-  min-height: 2.5em;
-  max-height: 200px;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-normal);
+  font-family: inherit;
   font-size: var(--font-ui-small);
+  line-height: 1.5;
 }
+
+.ai-assist-chat .ai-input::placeholder { color: var(--text-faint); }
 
 .ai-assist-chat .ai-send {
   display: flex;
@@ -1081,3 +1233,89 @@
   width: 1em;
   height: 1em;
 }
+
+/* Compact subscription controls; explanations live in accessible tooltips. */
+.ai-assist-chat .ai-plan-status {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+  min-width: 0;
+  font-size: var(--font-ui-smaller);
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+.ai-plan-status .ai-plan-label { margin-right: auto; }
+.ai-plan-status select {
+  height: 22px;
+  max-width: 110px;
+  padding: 0 20px 0 6px;
+  font-size: inherit;
+}
+.ai-shared-quota {
+  display: flex;
+  flex: 1 1 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--font-ui-smaller);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+.ai-quota-summary {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 6px;
+  overflow-wrap: anywhere;
+}
+.ai-quota-window { display: inline-flex; flex-wrap: wrap; gap: 0 4px; align-items: baseline; }
+.ai-quota-label, .ai-quota-percent, .ai-quota-reset { white-space: nowrap; }
+.ai-quota-percent { color: var(--text-normal); font-weight: 600; }
+.ai-quota-reset, .ai-quota-snapshot { color: var(--text-muted); }
+.ai-quota-snapshot { margin-left: -4px; }
+.ai-shared-quota .ai-quota-refresh {
+  display: inline-flex;
+  flex: 0 0 22px;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 3px;
+  margin: 0;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+.ai-shared-quota .ai-quota-refresh:hover { color: var(--text-normal); background: var(--background-modifier-hover); }
+.ai-shared-quota .ai-quota-refresh:disabled { opacity: 0.5; }
+.ai-shared-quota .svg-icon { width: 14px; height: 14px; }
+
+/* Quota stays inside the composer; full dates and provenance are accessible on focus. */
+.ai-assist-chat .ai-composer .ai-plan-status {
+  flex: 1 1 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+}
+.ai-assist-chat .ai-composer .ai-shared-quota {
+  flex: 0 1 auto;
+  gap: 2px;
+  max-width: 100%;
+  padding-left: 5px;
+  font-size: var(--font-ui-smaller);
+  line-height: 1.4;
+}
+.ai-assist-chat .ai-composer .ai-quota-summary { flex: 0 1 auto; gap: 0 4px; }
+.ai-assist-chat .ai-composer .ai-quota-label { white-space: normal; }
+.ai-assist-chat .ai-composer .ai-quota-refresh {
+  flex-basis: 22px;
+  width: 22px;
+  height: 22px;
+  padding: 4px;
+}
+.ai-assist-chat .ai-composer .ai-shared-quota .svg-icon { width: 12px; height: 12px; }

@@ -87,8 +87,11 @@ sidebar, but the main road is selection → key → done.
 
 ## Providers
 
-Anything that speaks the OpenAI format. The presets are the ones that work from Russia
-without a VPN:
+OpenAI-compatible API providers, plus an optional **ChatGPT subscription** provider on
+desktop. ChatGPT availability depends on the account, workspace and supported region; it
+is not included in the Russia-without-a-VPN list below.
+
+The API presets include:
 
 - **DeepSeek** — the Chinese model directly: cheap, no middleman;
 - **Polza.ai**, **ChadGPT**, **GPTunnel** — Russian aggregators: one key, and behind it
@@ -110,8 +113,9 @@ is asked for and none is sent.
 ## Getting started
 
 1. Install the plugin and open its settings.
-2. Pick a provider, paste the API key, and choose a model — the "Fetch" button asks the
-   provider for the list. There is a "Test connection" button right below.
+2. Pick a provider, paste its API key or use **Continue with ChatGPT**, and choose a model.
+   The "Fetch" button asks the provider for the list. "Test connection" sends a short
+   request and may use allowance or credits.
 3. In the "Quick menu" section, switch on `Alt+1` — or give the "Quick menu over the
    selection" command a key of your own in Obsidian's hotkey settings.
 4. Select some text in a note and press it. Or right-click the selection — the plugin is
@@ -150,7 +154,9 @@ settings.
 The text you run an action on goes to the provider you configured, and nowhere else. The
 plugin has no telemetry, no analytics and no server of its own; the settings live in
 `.obsidian/plugins/ai-assist/data.json` and the chat history in `history.json` next to it,
-inside your vault.
+inside your vault. ChatGPT sign-in credentials are the exception: they are encrypted with
+the operating system through Electron safeStorage and kept in Obsidian's local application
+data, outside the vault. They are never saved in plugin settings or chat history.
 
 An image attached to a question goes to that same provider and inside the request itself, as
 a `data:` address, without being uploaded anywhere. With "Keep images brought into the chat"
@@ -177,9 +183,27 @@ on. A normal "New chat" brings everything back.
 
 ## Requirements
 
-Obsidian 1.8.7 or newer. Desktop and mobile. An API key from one of the providers, or a
-local server on your own machine.
+Obsidian 1.8.7 or newer. Desktop and mobile for the existing API providers. Use a provider's
+API key, a local model server, or an eligible ChatGPT account on desktop.
 
 ## License
 
 MIT — see [LICENSE](https://github.com/mrrepac/ai-assist/blob/master/LICENSE).
+
+## ChatGPT subscription (desktop)
+
+Use **Continue with ChatGPT** in settings, fetch your account's models, then choose a model
+and reasoning effort. Requests use the eligible ChatGPT plan or available credits. There is
+no automatic paid API fallback and no Fast mode. Existing API providers are unchanged.
+
+The optional allowance display uses an already installed and signed-in official Codex CLI.
+Refresh it manually to see the shared Codex/ChatGPT Work allowance for a matching email.
+It is not the plugin's own limit, and a matching workspace is not verified.
+
+See [setup, security and verification](docs/chatgpt-subscription.md). For manual installation,
+download `main.js`, `manifest.json` and `styles.css` from the latest GitHub release into
+`.obsidian/plugins/ai-assist/`, then reload and enable the plugin.
+
+For development, run `npm ci`, `npm run build` and `npm run test:all`. A normal build never
+copies into a vault. To deploy deliberately, set `AI_ASSIST_VAULT_PLUGIN` to the existing
+absolute plugin directory and run `npm run build:deploy`.

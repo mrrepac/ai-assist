@@ -1,3 +1,6 @@
+import { renderChatGPTQuota } from "./chatgpt-quota-view";
+import { chatGPTEfforts, chatGPTEffort } from "./chatgpt-options";
+import { chatGPTStatus, connectChatGPT, disconnectChatGPT, selectChatGPTAccount, cancelChatGPTLogin } from "./chatgpt-auth";
 import { App, Notice, Platform, PluginSettingTab, Setting, debounce, setIcon } from "obsidian";
 import { newAction } from "./actions";
 import { ApiError, chat, isLocalUrl } from "./api";
@@ -45,6 +48,9 @@ export class AiAssistSettingTab extends PluginSettingTab {
   private dragFrom: number | null = null;
   /** Контейнер списка клавиш: перерисовывается сам, без остального экрана. */
   private slotsEl: HTMLElement | null = null;
+  private disposeQuota?: () => void;
+  private chatGPTBusy = false;
+  private chatGPTModels: string[] = [];
 
   constructor(app: App, private plugin: AiAssistPlugin) {
     super(app, plugin);
@@ -52,6 +58,7 @@ export class AiAssistSettingTab extends PluginSettingTab {
 
   display(): void {
     const { containerEl } = this;
+    this.disposeQuota?.();
     containerEl.empty();
 
     this.modelSection();
@@ -327,8 +334,10 @@ export class AiAssistSettingTab extends PluginSettingTab {
   private saveLater = debounce(() => void this.save(), 600, true);
 
   hide(): void {
+    this.disposeQuota?.();
     // Закрыли настройки, не дождавшись таймера, — дописываем сейчас.
     this.saveLater.run();
+    cancelChatGPTLogin();
     super.hide();
   }
 
@@ -350,6 +359,7 @@ export class AiAssistSettingTab extends PluginSettingTab {
           .addOptions(Object.fromEntries(PROVIDER_ORDER.map((n) => [n, providerLabel(n)])))
           .addOption("custom", providerLabel("custom"))
           .setValue(provider)
+          .setDisabled(this.chatGPTBusy)
           .onChange(async (v) => {
             switchProvider(s, v);
             // У каждого сервиса свои имена моделей — угадать их нельзя.
@@ -359,7 +369,8 @@ export class AiAssistSettingTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(containerEl)
+    if (provider === "chatgpt") this.chatGPTSection();
+    if (provider !== "chatgpt") new Setting(containerEl)
       .setName(t("setBaseUrl"))
       .setDesc(t("setBaseUrlDesc"))
       .addText((c) =>
@@ -373,7 +384,7 @@ export class AiAssistSettingTab extends PluginSettingTab {
       );
 
     // У локального сервера ключа нет — поле для него только сбивало бы с толку.
-    if (!isLocalUrl(s.baseUrl)) {
+    if (provider !== "chatgpt" && !isLocalUrl(s.baseUrl)) {
       new Setting(containerEl)
         .setName(t("setApiKey"))
         .setDesc(t("setApiKeyDesc"))
@@ -388,10 +399,16 @@ export class AiAssistSettingTab extends PluginSettingTab {
         });
     }
 
-    new Setting(containerEl)
+    const modelSetting = new Setting(containerEl)
       .setName(t("setModel"))
-      .setDesc(MODEL_HINT[provider] ? t(MODEL_HINT[provider]) : "")
-      .addText((c) =>
+      .setDesc(provider === "chatgpt" ? t("chatGPTModel") : MODEL_HINT[provider] ? t(MODEL_HINT[provider]) : "")
+      ;
+    if (provider === "chatgpt") modelSetting.addDropdown(c => {
+      c.addOption("", t("chatGPTModel"));
+      for (const model of Array.from(new Set([s.model, ...this.chatGPTModels])).filter(Boolean)) c.addOption(model, model);
+      c.setValue(s.model).onChange(async model => { s.model = model; await this.saveAndRedraw(); });
+    });
+    else modelSetting.addText((c) =>
         c
           .setPlaceholder(DEEPSEEK_MODEL)
           .setValue(s.model)
@@ -399,18 +416,20 @@ export class AiAssistSettingTab extends PluginSettingTab {
             s.model = v.trim();
             this.saveLater();
           }),
-      )
-      .addButton((b) =>
+      );
+    modelSetting.addButton((b) =>
         b.setButtonText(t("setModelFetch")).onClick(async () => {
           b.setDisabled(true);
           try {
             const models = await modelsFor(this.plugin.apiConfig());
+            if (provider === "chatgpt") this.chatGPTModels = models;
             // У провайдера со встроенным списком спрашивать было нечего —
             // «моделей найдено» тут прозвучало бы как отчёт о запросе, которого
             // не было.
             new Notice(
               builtinModels(provider) ? t("setModelBuiltin") : t("setModelFetched", { n: models.length }),
             );
+            if (provider === "chatgpt") { this.display(); return; }
             new ModelSuggestModal(this.app, models, (model) => {
               s.model = model;
               void this.saveAndRedraw();
@@ -423,9 +442,20 @@ export class AiAssistSettingTab extends PluginSettingTab {
         }),
       );
 
+    if (provider === "chatgpt") new Setting(containerEl).setName(t("chatGPTEffort")).setDesc(t("chatGPTEffortHint"))
+      .addDropdown(c => {
+        c.addOption("", t("chatGPTDefault"));
+        for (const effort of chatGPTEfforts(s.model)) c.addOption(effort, effort);
+        c.setValue(chatGPTEffort(s.model, s.chatGPTEfforts?.[s.model]) ?? "");
+        c.onChange(async effort => {
+          s.chatGPTEfforts = { ...s.chatGPTEfforts, [s.model]: effort };
+          await this.save();
+        });
+      });
+
     new Setting(containerEl)
       .setName(t("setTest"))
-      .setDesc(t("setTestDesc"))
+      .setDesc(provider === "chatgpt" ? t("chatGPTTest") : t("setTestDesc"))
       .addButton((b) =>
         b.setButtonText(t("setTestBtn")).onClick(async () => {
           b.setButtonText(t("setTestGoing")).setDisabled(true);
@@ -451,13 +481,74 @@ export class AiAssistSettingTab extends PluginSettingTab {
 
   // ——————————————————————— поведение ———————————————————————
 
+
+  private chatGPTSection(): void {
+    const box = this.containerEl.createDiv();
+    new Setting(box).setDesc(t("chatGPTIntro"));
+    if (!Platform.isDesktopApp) { new Setting(box).setDesc(t("chatGPTDesktop")); return; }
+    const statusRow = new Setting(box).setName(t("chatGPTAccount")).setDesc(t("chatGPTDisconnected"));
+    const actions = new Setting(box);
+    void chatGPTStatus().then(status => {
+      if (!box.isConnected) return;
+      statusRow.setDesc(status.error ?? (status.verificationPending ? t("chatGPTVerification") : status.connected ? (status.email ? status.email + ". " : "") + t(status.planUsageEnabled ? "chatGPTEnabled" : "chatGPTDisabled") : t("chatGPTDisconnected")));
+      if (status.accounts.length) statusRow.addDropdown(c => {
+        c.addOption("", t("chatGPTPick"));
+        for (const account of status.accounts) c.addOption(account.id, account.label);
+        c.setValue(status.activeAccountId ?? "").setDisabled(this.chatGPTBusy);
+        c.onChange(async id => {
+          if (!id || this.chatGPTBusy) return;
+          if (!status.accounts.find(a => a.id === id)?.connected) { connect(id); return; }
+          this.chatGPTBusy = true;
+          try {
+            await selectChatGPTAccount(id);
+            this.chatGPTModels = [];
+            this.plugin.settings.model = "";
+            await this.save();
+          } catch (e) { new Notice(e instanceof Error ? e.message : "ChatGPT connection failed.", 8000); }
+          finally { this.chatGPTBusy = false; this.display(); }
+        });
+      });
+      const connect = (accountId?: string) => {
+        if (this.chatGPTBusy) return;
+        this.chatGPTBusy = true;
+        new ConfirmModal(this.app, t("chatGPTConsentTitle"), t("chatGPTConsent"), t("chatGPTConnect"), () => {
+          this.display();
+          void connectChatGPT(accountId).then(async connected => {
+            this.chatGPTModels = [];
+            this.plugin.settings.model = "";
+            if (connected.planUsageEnabled && !this.plugin.settings.chatGPTWelcomeSeen) {
+              this.plugin.settings.chatGPTWelcomeSeen = true;
+              new ConfirmModal(this.app, t("chatGPTWelcome"), t("chatGPTWelcomeText"), t("chatGPTGotIt"), () => {}).open();
+            }
+            await this.save();
+          }).catch(e => new Notice(e instanceof Error ? e.message : "ChatGPT connection failed.", 10000))
+            .finally(() => { this.chatGPTBusy = false; if (box.isConnected || this.containerEl.isConnected) this.display(); });
+        }, () => { this.chatGPTBusy = false; }).open();
+      };
+      actions.addButton(b => b.setButtonText(this.chatGPTBusy ? t("chatGPTConnecting") : t(status.connected ? "chatGPTAddAccount" : "chatGPTConnect")).setDisabled(this.chatGPTBusy || !status.available).onClick(() => connect(status.connected ? undefined : status.activeAccountId)));
+      if (status.connected && !status.planUsageEnabled && !status.verificationPending) actions.addButton(b => b.setButtonText(t("chatGPTEnable")).setDisabled(this.chatGPTBusy).onClick(() => connect(status.activeAccountId)));
+      if (this.chatGPTBusy) actions.addButton(b => b.setButtonText(t("modalCancel")).onClick(() => cancelChatGPTLogin()));
+      if (status.connected) actions.addButton(b => b.setButtonText(t("chatGPTDisconnect")).setDisabled(this.chatGPTBusy).onClick(() => {
+        new ConfirmModal(this.app, t("chatGPTDisconnectTitle"), t("chatGPTDisconnectHint"), t("chatGPTDisconnect"), () => {
+          if (this.chatGPTBusy) return;
+          this.chatGPTBusy = true;
+          void disconnectChatGPT().then(result => { if (!result.revoked) new Notice(t("chatGPTRevokeFailed"), 10000); })
+            .catch(e => new Notice(e instanceof Error ? e.message : "ChatGPT disconnect failed.", 10000))
+            .finally(() => { this.chatGPTBusy = false; this.display(); });
+        }).open();
+      }));
+    }).catch(e => statusRow.setDesc(e instanceof Error ? e.message : "ChatGPT status unavailable."));
+    this.disposeQuota = renderChatGPTQuota(box);
+  }
+
   private behaviourSection(): void {
     const { containerEl } = this;
     const s = this.plugin.settings;
 
     new Setting(containerEl).setName(t("setBehaviourHead")).setHeading();
 
-    new Setting(containerEl)
+    if (providerOf(s) === "chatgpt") new Setting(containerEl).setDesc(t("chatGPTControls"));
+    if (providerOf(s) !== "chatgpt") new Setting(containerEl)
       .setName(t("setTemperature"))
       .setDesc(t("setTemperatureDesc"))
       .addSlider((c) =>
@@ -470,7 +561,7 @@ export class AiAssistSettingTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(containerEl)
+    if (providerOf(s) !== "chatgpt") new Setting(containerEl)
       .setName(t("setMaxTokens"))
       .setDesc(t("setMaxTokensDesc"))
       .addText((c) =>
@@ -485,7 +576,7 @@ export class AiAssistSettingTab extends PluginSettingTab {
 
     // Переключатели, которых у провайдера нет, лучше не показывать вовсе:
     // включённая настройка, которая ни на что не влияет, — это ложь.
-    if (streamAvailable(s)) {
+    if (providerOf(s) !== "chatgpt" && streamAvailable(s)) {
       new Setting(containerEl)
         .setName(t("setStream"))
         .setDesc(t("setStreamDesc"))

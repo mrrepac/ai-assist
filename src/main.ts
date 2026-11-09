@@ -1,3 +1,4 @@
+import { cancelChatGPTLogin } from "./chatgpt-auth";
 import {
   Editor,
   EditorPosition,
@@ -262,6 +263,7 @@ export default class AiAssistPlugin extends Plugin implements ChatHost {
   }
 
   onunload(): void {
+    cancelChatGPTLogin();
     this.stopAll();
     // Временные ссылки на картинки живут до конца сеанса сами по себе —
     // отпускаем их вместе с плагином, иначе это утечка ровно на их размер.

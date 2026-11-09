@@ -30,6 +30,8 @@ async function load(entry, name) {
   await esbuild.build({
     entryPoints: [entry],
     bundle: true,
+    platform: "node",
+    external: ["electron", "@electron/remote"],
     format: "esm",
     outfile,
     plugins: [obsidianStub],
@@ -805,7 +807,7 @@ check("мусор в режиме меню чинится", mergeSettings({ edit
 
 // ——— порядок провайдеров ———
 // Один список на выпадающее меню в настройках и на меню в шапке панели.
-check("порядок провайдеров", PROVIDER_ORDER, ["deepseek", "chadgpt", "gptunnel", "polza", "perplexity", "ollama", "lmstudio"]);
+check("порядок провайдеров", PROVIDER_ORDER, ["chatgpt", "deepseek", "chadgpt", "gptunnel", "polza", "perplexity", "ollama", "lmstudio"]);
 check("ollama узнаётся по адресу", providerOf({ baseUrl: "http://localhost:11434/v1" }), "ollama");
 // Локальные серверы держатся вместе и последними: у них свой разговор про порт
 // и про ключ, которого не бывает.

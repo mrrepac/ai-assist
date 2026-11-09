@@ -1,3 +1,5 @@
+import { isChatGPTPlan } from "./chatgpt-responses";
+import { chatGPTChat, chatGPTModels } from "./chatgpt";
 import { requestUrl } from "obsidian";
 import { t } from "./i18n";
 
@@ -18,6 +20,8 @@ export type ContentPart =
   | { type: "image_url"; image_url: { url: string } };
 
 export interface ChatMessage {
+  /** Request-local Responses items; never persisted in history. */
+  responseItems?: Record<string, unknown>[];
   role: "system" | "user" | "assistant" | "tool";
   /**
    * Строка — обычная реплика, массив — реплика с вложениями. Второй вид
@@ -140,6 +144,7 @@ export interface ToolSpec {
 }
 
 export interface ApiConfig {
+  reasoningEffort?: string;
   baseUrl: string;
   apiKey: string;
   model: string;
@@ -170,6 +175,7 @@ export function addUsage(a: Usage | null, b: Usage | null): Usage | null {
 }
 
 export interface ChatResult {
+  responseItems?: Record<string, unknown>[];
   text: string;
   reasoning: string;
   usage: Usage | null;
@@ -418,6 +424,7 @@ export async function chat(
   messages: ChatMessage[],
   opts: ChatOptions,
 ): Promise<ChatResult> {
+  if (isChatGPTPlan(cfg)) return chatGPTChat(cfg, messages, opts);
   if (!cfg.apiKey.trim() && !isLocalUrl(cfg.baseUrl)) throw new ApiError(t("errNoKey"));
   if (!cfg.model.trim()) throw new ApiError(t("errNoModel"));
   return opts.stream ? streamChat(cfg, messages, opts) : plainChat(cfg, messages, opts);
@@ -626,6 +633,7 @@ export function collectToolCalls(delta: WireDelta, calls: Map<number, ToolCall>)
 
 /** Список моделей провайдера (GET /models) — чтобы не вбивать имена руками. */
 export async function listModels(cfg: ApiConfig): Promise<string[]> {
+  if (isChatGPTPlan(cfg)) return chatGPTModels();
   const res = await requestUrl({
     url: endpoint(cfg.baseUrl, "/models"),
     method: "GET",
